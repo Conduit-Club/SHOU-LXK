@@ -20,7 +20,12 @@ const pageUrl = (page: number) => `/teachers?${new URLSearchParams({ q: data.q, 
       <h1 class="text-3xl font-semibold sm:text-4xl">从名字，走近一堂课。</h1>
       <p class="mt-3 text-sm text-muted-foreground">查找授课信息，了解同学眼中的老师。</p>
     </div>
-    <span class="count-note">{data.total.toLocaleString()} 位老师</span>
+    <div class="flex flex-wrap items-center gap-3 text-sm">
+      <span class="count-note">{data.total.toLocaleString()} 位老师</span><a
+        href="/submissions?kind=teacher"
+        class="text-primary hover:underline">补充老师 →</a
+      >
+    </div>
   </header>
   <DirectorySearch action="/teachers" q={data.q} label="搜索老师" placeholder="输入老师姓名" />
   <div class="teacher-directory mt-6">

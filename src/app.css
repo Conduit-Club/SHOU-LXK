@@ -75,6 +75,90 @@
   --sidebar-ring: #904855;
 }
 
+.site-shell {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+.site-header-top {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.site-account {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  grid-row: 2;
+}
+.site-account form {
+  min-width: 0;
+}
+.site-navigation {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+.site-links {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.catalog-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.catalog-field input,
+.catalog-field textarea,
+.catalog-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 400;
+}
+.catalog-field :is(input, textarea, select):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+@media (min-width: 768px) {
+  .site-shell {
+    grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+    gap: 12px 24px;
+  }
+  .site-account {
+    grid-column: 2;
+    grid-row: 1;
+    justify-content: flex-end;
+  }
+  .site-navigation {
+    grid-column: 1 / -1;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 24px;
+  }
+  .site-links {
+    min-width: 340px;
+  }
+  .top-search {
+    width: 100%;
+    max-width: 384px;
+    justify-self: end;
+  }
+}
+
 :root[data-theme="light"] .site-header {
   background: #fdf9f3;
   box-shadow: none;

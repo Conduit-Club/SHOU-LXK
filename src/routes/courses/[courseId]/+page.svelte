@@ -1,4 +1,5 @@
 <script lang="ts">
+import { sectionLabel } from "#lib/catalog.js";
 import TeacherLinks from "#lib/components/teacher-links.svelte";
 import BackToList from "#lib/components/back-to-list.svelte";
 import { goto } from "$app/navigation";
@@ -64,7 +65,7 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
           </p>
           <h1 class="text-3xl font-semibold tracking-tight text-primary sm:text-4xl">{data.course.name}</h1>
           <p class="mt-3 text-sm text-muted-foreground">
-            {data.section ? `班级 ${data.section.lid}` : "全部班级"} · {data.total} 条点评
+            {data.section ? sectionLabel(data.section.lid) : "全部课段"} · {data.total} 条点评
           </p>
         </div>
         {#if data.sections.length}<Button href={writeUrl}>＋ 写点评</Button>{/if}
@@ -235,7 +236,9 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
                 <p class="text-sm font-medium">
                   {section.teachers.map((teacher) => teacher.name).join("、") || "暂无教师信息"}
                 </p>
-                <p class="mt-2 text-xs text-muted-foreground">班级 {section.lid} · {section.review_count} 条点评</p>
+                <p class="mt-2 text-xs text-muted-foreground">
+                  {sectionLabel(section.lid)} · {section.review_count} 条点评
+                </p>
               </a>
             {/each}
           </div>

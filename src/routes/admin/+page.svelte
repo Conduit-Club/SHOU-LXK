@@ -22,7 +22,10 @@ const time = (seconds: number) =>
 
 <svelte:head><title>点评管理 · SHOU LXK</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
 <main id="main-content" class="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-  <h1 class="text-2xl font-semibold">点评管理</h1>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <h1 class="text-2xl font-semibold">点评管理</h1>
+    <a href="/admin/submissions" class="text-sm text-primary">目录补充审核 →</a>
+  </div>
   <p class="mt-3 text-sm leading-7 text-muted-foreground">
     按内容、课程、老师或作者查找点评，每次操作需填写理由。删除可恢复；本站封禁会立即撤销 LXK 会话，现有点评保留。
   </p>

@@ -1,4 +1,5 @@
 <script lang="ts">
+import { sectionLabel } from "#lib/catalog.js";
 import Turnstile from "#lib/components/turnstile.svelte";
 import { Button } from "#lib/components/ui/button/index.js";
 import * as Field from "#lib/components/ui/field/index.js";
@@ -39,7 +40,7 @@ let verified = $state(false);
   <form method="POST" action="?/submitReview" class="mt-5">
     <input type="hidden" name="csrfToken" value={csrfToken} />
     <p class="mb-5 text-sm leading-6 text-muted-foreground">
-      默认匿名发表，也可使用统一账号用户名。本站保存账号关联用于内容管理，请勿填写个人联系方式。
+      点评提交后即公开，无需事先审核。默认匿名发表，也可使用统一账号用户名。本站保存账号关联用于内容管理，请勿填写个人联系方式。
     </p>
     <Field.Group>
       <fieldset class="space-y-3 rounded-lg border border-border p-4">
@@ -66,7 +67,7 @@ let verified = $state(false);
           <input type="hidden" name="lid" value={selectedLid ?? sections[0].lid} />
         {:else}
           <Field.Field data-invalid={form?.message ? true : undefined}>
-            <Field.Label for="review-section">课程班级</Field.Label>
+            <Field.Label for="review-section">课程课段</Field.Label>
             <select
               id="review-section"
               name="lid"
@@ -74,10 +75,12 @@ let verified = $state(false);
               class="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 rounded-md border px-2.5 text-sm shadow-xs outline-none focus-visible:ring-3"
               value={form?.lid ?? ""}
             >
-              <option value="" disabled>请选择课程班级</option>
+              <option value="" disabled>请选择课程课段</option>
               {#each sections as choice (choice.lid)}
                 <option value={choice.lid}
-                  >{choice.teachers.map((teacher) => teacher.name).join("、") || "教师信息待补充"} · {choice.lid}</option
+                  >{choice.teachers.map((teacher) => teacher.name).join("、") || "教师信息待补充"} · {sectionLabel(
+                    choice.lid,
+                  )}</option
                 >
               {/each}
             </select>

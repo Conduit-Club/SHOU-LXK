@@ -1,4 +1,5 @@
 <script lang="ts">
+import { sectionLabel } from "#lib/catalog.js";
 import { resolve } from "$app/paths";
 import BackToList from "#lib/components/back-to-list.svelte";
 import { goto } from "$app/navigation";
@@ -59,7 +60,7 @@ const pageUrl = (page: number, sort = data.sort) => {
             >{course.name}</a
           >
           <p class="mt-2 text-sm text-muted-foreground">
-            {course.course_id} · 班级 {course.lid} · {course.college} · {course.credits} 学分
+            {course.course_id} · {sectionLabel(course.lid)} · {course.college} · {course.credits} 学分
           </p>
         </li>
       {:else}

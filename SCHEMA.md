@@ -59,3 +59,7 @@ New reviews bind `author_id` to the server-validated session user. This associat
 The previously migrated local snapshot contained 971 teachers, 4,407 section-teacher links, and 5,631 course reviews. Those counts describe that older archive; the 2026-10-02 dump has the audited counts above.
 
 Deploy the migration and application together during a maintenance window: the old application queries `reviews` and `teacher_name`, while the new application requires the new tables. Back up the remote database before applying migrations. This change and the production D1 import and application deployment are complete; future schema migrations remain separate steps.
+
+## 目录补充审核（0009）
+
+新增私有提案与审核审计表、4个索引和4个触发器；不回填或重建历史目录、点评。批准时在同一事务新增可点评课段。字段、权限、限频和上线顺序见 [CATALOG_SUBMISSIONS.md](docs/CATALOG_SUBMISSIONS.md)。

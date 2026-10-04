@@ -135,3 +135,11 @@ export async function invalidateHomeReviews(url: URL, cache = openCache()) {
   // uncached. Run only AFTER a successful write, before the redirect.
   await Promise.allSettled([store.delete(cacheRequest(url, "latest")), store.delete(cacheRequest(url, "stats"))]);
 }
+
+export async function invalidateCatalog(url: URL, cache = openCache()) {
+  const store = await cache;
+  if (!store) return;
+  await Promise.allSettled(
+    ["stats", "additions", "options"].map((key) => store.delete(cacheRequest(url, key as HomeKey))),
+  );
+}

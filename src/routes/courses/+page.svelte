@@ -108,7 +108,10 @@ const extraFilters = $derived([
         <p class="mb-2 text-xs tracking-widest text-muted-foreground">课程与班级</p>
         <h1 id="course-catalog-heading" class="text-2xl font-semibold sm:text-3xl">浏览课程</h1>
       </div>
-      <p class="text-sm text-muted-foreground">共 {data.total.toLocaleString()} 个班级</p>
+      <div class="flex flex-wrap items-center gap-3 text-sm">
+        <p class="text-muted-foreground">共 {data.total.toLocaleString()} 个课段</p>
+        <a href="/submissions?kind=course" class="text-primary hover:underline">补充课程 / 课程号 →</a>
+      </div>
     </header>
 
     <form method="GET" action="/courses" role="search" onsubmit={submitSearch} class="filter-card flex flex-col gap-4">

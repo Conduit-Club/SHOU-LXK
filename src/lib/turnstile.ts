@@ -4,7 +4,7 @@ interface Turnstile {
     options: {
       sitekey: string;
       action: string;
-      size: "flexible";
+      size: "flexible" | "compact";
       callback: () => void;
       "expired-callback": () => void;
       "error-callback": () => void;
