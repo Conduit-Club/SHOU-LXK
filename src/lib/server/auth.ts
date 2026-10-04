@@ -4,6 +4,7 @@ import type { Cookies, RequestEvent } from "@sveltejs/kit";
 import { getBindings } from "./platform.js";
 
 export const SESSION_TTL = 8 * 60 * 60;
+export const ADMIN_ROLE_TTL = 60 * 60;
 export const LOGIN_TTL = 10 * 60;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const loopback = (host: string) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
@@ -327,11 +328,11 @@ export async function completeLogin(event: AuthEvent, fetcher?: oidc.CustomFetch
     typeof checkedAt !== "number" ||
     !Number.isSafeInteger(checkedAt) ||
     checkedAt > seconds() + 30 ||
-    checkedAt + 300 <= seconds()
+    checkedAt + ADMIN_ROLE_TTL <= seconds()
   )
     throw new AuthFailure(400);
   const role = userInfo.roles.includes("admin") ? "admin" : "user";
-  const roleExpiresAt = Math.min(seconds() + 300, checkedAt + 300, claims.exp);
+  const roleExpiresAt = Math.min(seconds() + ADMIN_ROLE_TTL, checkedAt + ADMIN_ROLE_TTL, claims.exp);
   const avatar = profileAvatar(userInfo.picture, config.issuer);
   const emailHash = await tokenHash(email);
   const user = await db

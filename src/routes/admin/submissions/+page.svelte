@@ -24,7 +24,7 @@ const pageUrl = (number: number) => {
   <p class="mt-3 text-sm leading-7 text-muted-foreground">
     核实课程号、老师姓名与课程信息后收录。通过或拒绝均需填写理由；原始提交保留，理由可由提交者查看。通过后才能浏览、搜索并发表点评。
   </p>
-  <p class="mt-2 text-xs text-muted-foreground">权限每次验证最多有效五分钟，到期后请通过顶部入口重新验证。</p>
+  <p class="mt-2 text-xs text-muted-foreground">权限每次验证最多有效一小时，到期后请通过顶部入口重新验证。</p>
   {#if form?.message}<p class="mt-5 rounded-lg border border-border bg-muted p-4 text-sm" role="status">
       {form.message}
     </p>{/if}

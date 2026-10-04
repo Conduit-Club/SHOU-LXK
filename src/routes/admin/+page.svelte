@@ -30,7 +30,7 @@ const time = (seconds: number) =>
     按内容、课程、老师或作者查找点评，每次操作需填写理由。删除可恢复；本站封禁会立即撤销 LXK 会话，现有点评保留。
   </p>
   <p class="mt-2 text-xs text-muted-foreground">
-    管理权限每次验证最多有效五分钟。权限到期后，可通过顶部“验证管理权限”重新登录。
+    管理权限每次验证最多有效一小时。权限到期后，可通过顶部“验证管理权限”重新登录。
   </p>
   {#if form?.message}<p class="mt-5 rounded-lg border border-border bg-muted p-4 text-sm" role="status">
       {form.message}

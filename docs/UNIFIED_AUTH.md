@@ -22,7 +22,7 @@ scope 固定为 `openid profile email`，不申请 `offline_access`。回调必�
 
 `auth_users` 以 `issuer + subject` 唯一对应账号，保存 Auth 的唯一用户名、受限头像 URL、中心角色和角色失效时间；邮箱不作为永久身份，也不保存明文到本站数据库。旧邮箱 hash 保留在私有数据中，不再授予权限，`LXK_ADMIN_EMAILS` 不生效。中心角色的权限边界见 [ADMIN_MODERATION.md](ADMIN_MODERATION.md)。`auth_sessions` 保存 SHA-256 会话 token hash、用户 ID、独立 CSRF token 和绝对有效期。浏览器只持有随机 256-bit 不透明 token，Cookie 为 `__Host-lxk-session`，使用 `Path=/; HttpOnly; Secure; SameSite=Lax`，不设置 Domain。
 
-最新 UserInfo 必须提供 `username`、`roles` 和 UNIX 秒 `roles_checked_at`。用户名必须是 Auth 已规范化且不可更改的 2–24 字唯一用户名；缺少用户名的旧本站会话仍可浏览、退出，发表区会提示重新登录并补充资料，不回填“海大同学”。头像只接受与可信 issuer 同 origin 的 `/api/profile/avatar/<64位小写SHA256>.png`，其他 URL 不展示；旧头像失效时回退字符图标。管理员有效期取中心检查时间加 300 秒、当前时间加 300 秒和签名 ID Token `exp` 的最早值。未刷新管理员权限的普通会话仍可继续浏览，管理操作要求重新登录验证。
+最新 UserInfo 必须提供 `username`、`roles` 和 UNIX 秒 `roles_checked_at`。用户名必须是 Auth 已规范化且不可更改的 2–24 字唯一用户名；缺少用户名的旧本站会话仍可浏览、退出，发表区会提示重新登录并补充资料，不回填“海大同学”。头像只接受与可信 issuer 同 origin 的 `/api/profile/avatar/<64位小写SHA256>.png`，其他 URL 不展示；旧头像失效时回退字符图标。管理员有效期取中心检查时间加 3600 秒、当前时间加 3600 秒和签名 ID Token `exp` 的最早值。未刷新管理员权限的普通会话仍可继续浏览，管理操作要求重新登录验证。
 
 会话为 **8 小时绝对期限**，普通浏览不延长期限，也不每次访问账号中心。没有会话 Cookie（或格式不合法）的浏览请求不执行认证 SQL；有效 Cookie 通过主键和用户索引查询本站会话，同一请求只查询一次。页面与 SvelteKit 数据响应使用 `Cache-Control: private, no-store` 和 `Vary: Cookie`；首页 Cache API 继续只缓存公共 JSON，绝不放账号、CSRF、作者关联或 Cookie。
 
