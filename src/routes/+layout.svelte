@@ -66,6 +66,7 @@ const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSea
     </form>
     <div class="order-4 flex shrink-0 items-center gap-3 text-sm sm:ml-1">
       {#if data.auth}
+        {#if data.auth.isAdmin}<a href="/admin" class="font-medium text-primary">管理</a>{/if}
         <a
           href="https://auth.shoumc.com/account"
           class="flex max-w-28 items-center gap-1.5 text-muted-foreground hover:text-primary"

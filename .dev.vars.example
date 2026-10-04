@@ -8,3 +8,6 @@ OIDC_CLIENT_ID=shou-lxk-local
 OIDC_CLIENT_SECRET=replace-with-development-client-secret
 OIDC_REDIRECT_URI=http://localhost:5173/auth/callback
 OIDC_ALLOW_LOCAL_HTTP=true
+
+# Local development only. Production uses a separate Worker Secret allowlist.
+LXK_ADMIN_EMAILS=admin@invalid.test

@@ -73,6 +73,7 @@ function provider() {
   let calls = 0;
   let tokenCalls = 0;
   let userInfoSubject = "subject-1";
+  let userInfoData = { name: "Local student", email: "local-student@invalid.test", email_verified: true };
   return {
     get calls() {
       return calls;
@@ -82,6 +83,9 @@ function provider() {
     },
     set userInfoSubject(value) {
       userInfoSubject = value;
+    },
+    set userInfoData(value) {
+      userInfoData = value;
     },
     grant(authorization, overrides = {}, corruptSignature = false) {
       const url = new URL(authorization);
@@ -107,7 +111,10 @@ function provider() {
       }
       if (url.href === `${issuer}/jwks`) return Response.json({ keys: [jwk] });
       if (url.href === `${issuer}/oauth2/userinfo`)
-        return Response.json({ sub: userInfoSubject, name: "Local student", email_verified: true });
+        return Response.json({
+          sub: userInfoSubject,
+          ...userInfoData,
+        });
       assert.equal(url.href, `${issuer}/oauth2/token`);
       tokenCalls++;
       const basic = new Headers(init.headers).get("authorization");
@@ -132,6 +139,7 @@ function provider() {
         exp: now + 600,
         nonce: grant.url.searchParams.get("nonce"),
         email_verified: true,
+        email: "local-student@invalid.test",
         name: "Local student",
         ...grant.overrides,
       };
@@ -297,6 +305,50 @@ test("userinfo fallback checks the ID Token subject and issuer+sub remains the i
   });
 });
 
+test("administrator binding uses a complete verified email pair and cannot come from query or name claims", async () => {
+  await fixture(async (db) => {
+    const mailbox = "admin@invalid.test";
+    const jar = cookieJar();
+    const mock = provider();
+    const env = { LXK_ADMIN_EMAILS: mailbox };
+    const login = async (overrides, userInfo) => {
+      if (userInfo) mock.userInfoData = userInfo;
+      const authorization = await auth.beginLogin(
+        event(db, jar, "/auth/login?email=admin%40invalid.test&isAdmin=true", undefined, env),
+        false,
+        mock.fetch,
+      );
+      await auth.completeLogin(event(db, jar, mock.grant(authorization, overrides)), mock.fetch);
+      return auth.readSession(event(db, jar, "/", undefined, env));
+    };
+    assert.equal((await login({ name: mailbox })).isAdmin, false);
+    // Mixing an unverified ID Token email and UserInfo's unrelated verified
+    // flag would grant admin. Only a complete pair from one source is trusted.
+    assert.equal((await login({ email: mailbox, email_verified: undefined })).isAdmin, false);
+    const trusted = await login({ email: " Admin@Invalid.Test ", email_verified: true });
+    assert.equal(trusted.isAdmin, true);
+    const row = await db.prepare("SELECT * FROM auth_users").first();
+    assert.equal(row.verified_email_hash, await auth.tokenHash(mailbox));
+    assert.equal(Object.hasOwn(row, "email"), false);
+    const privateLayout = await layout(event(db, jar, "/", undefined, env));
+    assert.equal(privateLayout.auth.isAdmin, true);
+    assert.equal(JSON.stringify(privateLayout).includes(row.verified_email_hash), false);
+    assert.equal((await auth.readSession(event(db, jar, "/", undefined, { LXK_ADMIN_EMAILS: "" }))).isAdmin, false);
+    await db
+      .prepare("UPDATE auth_users SET banned_at=? WHERE id=?")
+      .bind(Math.floor(Date.now() / 1000), trusted.userId)
+      .run();
+    assert.equal(await auth.readSession(event(db, jar, "/", undefined, env)), null);
+    const authorization = await auth.beginLogin(event(db, jar, "/auth/login", undefined, env), false, mock.fetch);
+    await assert.rejects(
+      auth.completeLogin(event(db, jar, mock.grant(authorization, { email: mailbox })), mock.fetch),
+      (reason) => reason.status === 403,
+    );
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM auth_sessions").first()).n, 0);
+    assert.notEqual((await db.prepare("SELECT banned_at FROM auth_users").first()).banned_at, null);
+  });
+});
+
 test("public anonymous requests execute no auth SQL and all personalized responses forbid shared caching", async () => {
   const noDb = {
     ...config,
@@ -423,7 +475,7 @@ test("both review actions reject visitors, bad CSRF and bad Origin before Turnst
   });
 });
 
-test("0006 preserves legacy review IDs/content/counters and creates the same auth columns as a fresh schema", async () => {
+test("0006 and 0007 preserve legacy review IDs/content/counters and create the same columns as a fresh schema", async () => {
   const local = await localD1();
   const fresh = await localD1();
   try {
@@ -439,6 +491,10 @@ test("0006 preserves legacy review IDs/content/counters and creates the same aut
     );
     const before = await db.prepare("SELECT * FROM site_stats").first();
     await executeScript(db, await readFile(new URL("../migrations/0006_unified_auth.sql", import.meta.url), "utf8"));
+    await executeScript(
+      db,
+      await readFile(new URL("../migrations/0007_admin_moderation.sql", import.meta.url), "utf8"),
+    );
     assert.deepEqual(await db.prepare("SELECT * FROM site_stats").first(), before);
     assert.equal((await db.prepare("SELECT id, content, author_id FROM course_reviews").first()).author_id, null);
     assert.equal((await db.prepare("SELECT id, content, author_id FROM teacher_reviews").first()).author_id, null);

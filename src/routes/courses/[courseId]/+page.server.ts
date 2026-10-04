@@ -3,7 +3,7 @@ import { withTeachers } from "#lib/server/teachers.js";
 import { error, fail, redirect } from "@sveltejs/kit";
 import { verifyTurnstile } from "#lib/server/turnstile.js";
 import { invalidateHomeReviews } from "#lib/server/home-cache.js";
-import { reviewSession } from "#lib/server/auth.js";
+import { reviewSession, writeReview } from "#lib/server/auth.js";
 import type { Actions, PageServerLoad } from "./$types";
 
 const PAGE_SIZE = 20;
@@ -149,13 +149,14 @@ export const actions: Actions = {
     if (!section) return fail(400, { message: "请选择有效的课程班级。", ...values });
 
     const postedAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
-    const result = await db
-      .prepare(`
+    const result = await writeReview(
+      db
+        .prepare(`
         INSERT INTO course_reviews (lid, title, content, posted_at_local, author_id)
         VALUES (?, ?, ?, ?, ?)
       `)
-      .bind(lid, title, content, postedAt, session.userId)
-      .run();
+        .bind(lid, title, content, postedAt, session.userId),
+    );
     await invalidateHomeReviews(url);
     console.info(
       JSON.stringify({

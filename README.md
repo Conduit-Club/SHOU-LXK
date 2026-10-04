@@ -31,6 +31,7 @@
 - **老师**：独立搜索姓名，进入教师页查看授课信息与点评。
 - **顶部搜索**：仅搜索课程或课程号；点评与老师使用各自页面的搜索框。
 - **统一账号**：注册与登录使用 [SHOU-Auth](https://auth.shoumc.com)，账号资料在账号中心管理；本站会话有效 8 小时，可独立退出。
+- **内容管理**：本站管理员可分页删除/恢复课程与教师点评，记录理由与审计，封禁或解封可追溯的点评作者；本站封禁保留旧点评并即时撤销本站会话。
 - **分享体验**：登录后可在课程和教师页面提交点评，写入前由服务端验证会话、CSRF 和 Cloudflare Turnstile。点评公开匿名展示，本站保存账号关联用于内容管理；历史点评保留。
 - **加载失败**：显示统一、无内部细节的提示，并可玩本地校园跑酷——戴眼镜的学生躲避教学楼、收集 GPA POINTS。空格、↑ 或轻点画面跳跃；积分与真实成绩无关。
 
@@ -127,7 +128,7 @@ pixi run pnpm benchmark:pages --database <本地SQLite文件路径>
 
 ## 部署
 
-仓库不使用 Git 自动部署。读取优化需要 `0005`；统一账号需要新增 `0006`。两者均与前一版应用兼容。备份、迁移成本和回退说明见 [读取优化上线步骤](docs/D1_READ_BUDGET.md#上线步骤) 与 [统一认证上线顺序](docs/UNIFIED_AUTH.md#上线顺序与回退)。远程变更须由维护者明确决定。
+仓库不使用 Git 自动部署。读取优化需要 `0005`，统一账号需要 `0006`，本站管理需要 `0007`。备份、迁移成本和回退说明见 [读取优化上线步骤](docs/D1_READ_BUDGET.md#上线步骤)、[统一认证](docs/UNIFIED_AUTH.md#上线顺序与回退) 与 [管理员上线顺序](docs/ADMIN_MODERATION.md#生产顺序)。远程变更须由维护者明确决定。
 
 ```powershell
 pixi run pnpm exec wrangler d1 export DB --remote --output .wrangler/shou-courses-before-next-migration-<unique-time>.sql
