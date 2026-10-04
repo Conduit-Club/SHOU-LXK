@@ -87,10 +87,10 @@ export function parseHomeFilters(params: URLSearchParams) {
     minReviews: textFilter(params.get("minReviews")),
     sort: textFilter(params.get("sort")),
   };
-  const credit = /^\d+$/.test(filters.credits) ? Number(filters.credits) : null;
+  const credit = /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(filters.credits) ? Number(filters.credits) : null;
   const minReviews = /^\d+$/.test(filters.minReviews) ? Number(filters.minReviews) : null;
   filters.sort = ["reviews", "name", "credits"].includes(filters.sort) ? filters.sort : "reviews";
-  filters.credits = credit !== null && Number.isSafeInteger(credit) ? String(credit) : "";
+  filters.credits = credit !== null && Number.isFinite(credit) && credit >= 0 && credit <= Number.MAX_SAFE_INTEGER ? String(credit) : "";
   filters.minReviews =
     minReviews !== null && Number.isSafeInteger(minReviews) && minReviews > 0 ? String(minReviews) : "";
   return filters;

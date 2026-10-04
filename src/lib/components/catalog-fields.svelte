@@ -55,23 +55,24 @@ let {
       />
     </label>
     <label class="catalog-field" for={`${prefix}-credits`}>
-      <span>学分（整数）</span>
+      <span>学分</span>
       <input
         id={`${prefix}-credits`}
         name="credits"
         type="number"
         min="0"
         max="30"
-        step="1"
+        step="any"
+        placeholder="如：0.5、1.5、3"
         required
         value={values.credits ?? ""}
       />
     </label>
     <label class="catalog-field sm:col-span-2" for={`${prefix}-lid`}>
-      <span>班级编号（选填）</span>
+      <span>班级号（选填）</span>
       <input id={`${prefix}-lid`} name="lid" maxlength="60" value={values.lid ?? ""} autocomplete="off" />
       <span class="text-xs font-normal text-muted-foreground"
-        >未提供真实班级编号时，将建立标为“补充收录”的独立条目，供同学评价。</span
+        >未提供真实班级号时，将建立标为“补充收录”的独立条目，供同学评价。</span
       >
     </label>
   {/if}

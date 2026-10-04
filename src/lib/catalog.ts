@@ -43,4 +43,4 @@ export const catalogLink = (
       ? `/courses/${encodeURIComponent(item.published_course_id)}?${new URLSearchParams({ lid: item.published_lid })}`
       : null;
 
-export const sectionLabel = (lid: string) => (lid.startsWith("community-") ? "补充收录" : `班级 ${lid}`);
+export const sectionLabel = (lid: string) => (lid.startsWith("community-") ? "补充收录" : `班级号 ${lid}`);

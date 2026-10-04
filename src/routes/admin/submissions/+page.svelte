@@ -85,8 +85,8 @@ const pageUrl = (number: number) => {
         </p>
         {#if item.kind === "course"}<p class="mt-2 text-sm text-muted-foreground">
             原提交：{item.course_id} · {item.college} · {item.elective_type} · {item.credits} 学分{item.lid
-              ? ` · 班级 ${item.lid}`
-              : " · 未提供班级编号"}
+              ? ` · 班级号 ${item.lid}`
+              : " · 未提供班级号"}
           </p>{/if}
         {#if item.note}<p class="mt-3 whitespace-pre-wrap text-sm">补充说明：{item.note}</p>{/if}
         {#if item.status === "pending"}

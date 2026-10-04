@@ -47,12 +47,14 @@ export function parseCatalogDraft(form: FormData, forcedKind?: CatalogKind): Cat
   if (!/^[A-Z0-9][A-Z0-9._-]{0,39}$/.test(courseId)) error(400, "课程号仅支持字母、数字、点、下划线和短横线。");
   const college = field(form, "college", "开课学院", 100);
   const electiveType = field(form, "electiveType", "课程类型", 60);
-  const creditsText = field(form, "credits", "整数学分", 2);
-  if (!/^\d{1,2}$/.test(creditsText) || Number(creditsText) > 30) error(400, "学分须为0到30的整数，请核实后填写。");
-  const lid = field(form, "lid", "班级编号", 60, false);
+  const creditsText = field(form, "credits", "学分", 32);
+  const credits = Number(creditsText);
+  if (!/^(?:\d{1,2}(?:\.\d+)?|\.\d+)$/.test(creditsText) || !Number.isFinite(credits) || credits > 30)
+    error(400, "学分须为0到30的数字，可填写0.5、1.5等小数。请核实后填写。");
+  const lid = field(form, "lid", "班级号", 60, false);
   if (lid && (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/.test(lid) || /^community-/i.test(lid)))
-    error(400, "班级编号仅支持字母、数字、点、下划线和短横线，不能使用保留的收录编号。");
-  return { kind, name, courseId, college, electiveType, credits: Number(creditsText), lid: lid || null, note };
+    error(400, "班级号仅支持字母、数字、点、下划线和短横线，不能使用保留的收录编号。");
+  return { kind, name, courseId, college, electiveType, credits, lid: lid || null, note };
 }
 
 export async function requireSubmitter(event: CatalogEvent, form?: FormData) {

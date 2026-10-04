@@ -60,12 +60,10 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
     <div class="min-w-0">
       <header class="mb-6 flex flex-wrap items-end justify-between gap-5">
         <div>
-          <p class="mb-3 text-xs font-medium tracking-widest text-muted-foreground">
-            课程详情 / {data.course.course_id}
-          </p>
+          <p class="mb-3 text-xs font-medium tracking-widest text-muted-foreground">课程详情</p>
           <h1 class="text-3xl font-semibold tracking-tight text-primary sm:text-4xl">{data.course.name}</h1>
           <p class="mt-3 text-sm text-muted-foreground">
-            {data.section ? sectionLabel(data.section.lid) : "全部课段"} · {data.total} 条点评
+            课程号 {data.course.course_id} · {data.total} 条点评
           </p>
         </div>
         {#if data.sections.length}<Button href={writeUrl}>＋ 写点评</Button>{/if}
@@ -74,6 +72,13 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
       <section aria-labelledby="course-information" class="mb-7 rounded-xl border border-border bg-card">
         <h2 id="course-information" class="border-b border-border px-5 py-4 font-semibold">课程信息</h2>
         <dl class="grid gap-x-6 gap-y-5 p-5 sm:grid-cols-2">
+          {#if data.section}<div>
+              <dt class="mb-2 text-xs text-muted-foreground">班级号</dt>
+              <dd class="text-sm leading-6">
+                {data.section.lid.startsWith("community-") ? "未提供（补充收录）" : data.section.lid}
+              </dd>
+              <p class="mt-1 text-xs text-muted-foreground">历史记录使用原站课段编号，不代表教务系统班级号。</p>
+            </div>{/if}
           {#each details.filter((detail) => detail.value) as detail (detail.label)}
             <div>
               <dt class="mb-2 text-xs text-muted-foreground">{detail.label}</dt>
@@ -259,7 +264,7 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
             >
               <p class="text-sm font-medium leading-6">{course.name}</p>
               <p class="mt-2 text-xs leading-5 text-muted-foreground">
-                {course.elective_type} · {course.review_count} 条班级点评
+                课程号 {course.course_id} · {course.elective_type} · {course.review_count} 条点评
               </p>
             </a>
           {:else}<p class="py-5 text-sm text-muted-foreground">暂无可展示的相似课程。</p>{/each}

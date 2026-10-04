@@ -2,6 +2,7 @@ import "./helpers/server-imports.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
+import { unstable_splitSqlQuery } from "wrangler";
 import { localD1, executeScript, MemoryCache } from "./helpers/local-d1.mjs";
 const auth = await import("../src/lib/server/auth.ts");
 const catalog = await import("../src/lib/server/catalog-submissions.ts");
@@ -13,6 +14,7 @@ const teachers = await import("../src/routes/teachers/[teacherId]/+page.server.t
 const { loadLandingData, loadCatalogPublicData } = await import("../src/lib/server/home-cache.ts");
 const { load: publicCourses } = await import("../src/routes/courses/+page.server.ts");
 const { load: publicTeachers } = await import("../src/routes/teachers/+page.server.ts");
+const { parseHomeFilters } = await import("../src/lib/server/home-queries.ts");
 const issuer = "https://auth.shoumc.com/api/auth";
 const sample = {
   kind: "course",
@@ -24,12 +26,22 @@ const sample = {
   lid: "",
   note: "本地合成测试，非生产",
 };
+const decimalMigration = unstable_splitSqlQuery(
+  await readFile(new URL("../migrations/0010_decimal_credits.sql", import.meta.url), "utf8"),
+);
+const migrateCredits = (db, statements = decimalMigration) => db.batch(statements.map((sql) => db.prepare(sql)));
 
-async function fixture(run) {
+async function fixture(run, beforeDecimal = false) {
   const local = await localD1();
   try {
     const db = local.db;
-    await executeScript(db, await readFile(new URL("../schema.sql", import.meta.url), "utf8"));
+    await executeScript(
+      db,
+      await readFile(
+        new URL(beforeDecimal ? "./fixtures/schema-before-0010.sql" : "../schema.sql", import.meta.url),
+        "utf8",
+      ),
+    );
     const now = Math.floor(Date.now() / 1000);
     for (const [id, role] of [
       [1, "admin"],
@@ -123,6 +135,186 @@ const decide = (db, id, values = {}, user = 1, options = {}) =>
   );
 const row = (db, id) => db.prepare("SELECT * FROM catalog_submissions WHERE id=?").bind(id).first();
 const stats = (db) => db.prepare("SELECT courses,sections,reviews,teachers FROM site_stats WHERE id=1").first();
+
+async function databaseSnapshot(db) {
+  const tables = (
+    await db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT GLOB '_cf_*' ORDER BY name",
+      )
+      .all()
+  ).results;
+  const rows = {};
+  for (const { name } of tables) rows[name] = (await db.prepare(`SELECT * FROM ${name}`).all()).results;
+  return {
+    rows,
+    rowids: await Promise.all(
+      ["course_section", "catalog_submissions"].map(
+        async (name) => (await db.prepare(`SELECT rowid,* FROM ${name} ORDER BY rowid`).all()).results,
+      ),
+    ),
+    objects: (
+      await db
+        .prepare(
+          "SELECT type,name,tbl_name FROM sqlite_schema WHERE type IN ('index','trigger') AND name NOT LIKE 'sqlite_%' AND tbl_name NOT GLOB '_cf_*' ORDER BY type,name",
+        )
+        .all()
+    ).results,
+  };
+}
+
+test("decimal credits accept ordinary notation, reject invalid values and retain exact numeric filtering", () => {
+  for (const value of ["0", "0.5", ".5", "1.25", "12.125", "30", "30.0", "０．５"]) {
+    assert.equal(
+      catalog.parseCatalogDraft(new LocalForm({ ...sample, credits: value })).credits,
+      Number(value.normalize("NFKC")),
+    );
+  }
+  for (const value of [
+    "",
+    "-0.5",
+    "30.01",
+    "31",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "1e0",
+    "1e309",
+    "0x10",
+    "1,5",
+    "1.2.3",
+    " ",
+    "0.1234567890123456789012345678901234",
+  ]) {
+    assert.throws(
+      () => catalog.parseCatalogDraft(new LocalForm({ ...sample, credits: value })),
+      (reason) => reason.status === 400,
+    );
+  }
+  assert.equal(parseHomeFilters(new URLSearchParams({ credits: ".5" })).credits, "0.5");
+  assert.equal(parseHomeFilters(new URLSearchParams({ credits: "1.25" })).credits, "1.25");
+  assert.equal(
+    parseHomeFilters(new URLSearchParams({ credits: "42" })).credits,
+    "42",
+    "historical nonnegative credits retain filtering",
+  );
+  for (const credits of ["NaN", "Infinity", "-1", "1e0", "9007199254740992"]) {
+    assert.equal(parseHomeFilters(new URLSearchParams({ credits })).credits, "");
+  }
+});
+
+test("0010 preserves existing pending/approved/rejected data, audit JSON, child foreign keys, counters and schema objects", async () => {
+  await fixture(async (db) => {
+    await executeScript(
+      db,
+      `UPDATE course_section SET rowid=41,likes=7,dislikes=2,attribute='原属性' WHERE lid='s1';
+      INSERT INTO course_section_teachers VALUES ('s1',1,1);
+      INSERT INTO course_reviews(id,lid,title,content,posted_at_local,author_id,is_anonymous,public_username)
+      VALUES (17,'s1','本地旧点评','原始内容','2026-01-01',2,0,'local_2');
+      INSERT INTO moderation_review_archive(review_type,review_id,lid,title,content,posted_at_local,author_id,deleted_by,deleted_at,reason,operation_id)
+      VALUES ('course',99,'s1','本地归档','原始归档内容','2026-01-01',3,1,1,'本地测试','archive-fixture');`,
+    );
+    const pending = await submit(db);
+    const approved = await submit(db, { ...sample, courseId: "LOCAL-APPROVED" });
+    await decide(db, approved.id, { courseId: "LOCAL-APPROVED" });
+    const rejected = await submit(db, { kind: "teacher", name: "原未通过老师" });
+    await decide(db, rejected.id, { decision: "reject", reason: "原拒绝理由" });
+    const before = await databaseSnapshot(db);
+    await migrateCredits(db);
+    assert.deepEqual(await databaseSnapshot(db), before);
+    assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+    assert.equal((await db.prepare("PRAGMA quick_check").first()).quick_check, "ok");
+    for (const table of ["course_section", "catalog_submissions"]) {
+      const columns = (await db.prepare(`PRAGMA table_info(${table})`).all()).results;
+      assert.equal(columns.find(({ name }) => name === "credits").type, "REAL");
+    }
+    await assert.rejects(
+      db.prepare("UPDATE catalog_submissions SET credits=0.5 WHERE id=?").bind(pending.id).run(),
+      /LXK_SUBMISSION_(IMMUTABLE|ALREADY_REVIEWED)/,
+    );
+    await assert.rejects(
+      db.prepare("UPDATE catalog_submissions SET reason='changed' WHERE id=?").bind(approved.id).run(),
+      /LXK_SUBMISSION_ALREADY_REVIEWED/,
+    );
+    await assert.rejects(db.prepare("DELETE FROM catalog_submission_events").run(), /AUDIT_IMMUTABLE/);
+    await assert.rejects(db.prepare("UPDATE catalog_submission_events SET payload='{}'").run(), /AUDIT_IMMUTABLE/);
+    const result = await decide(db, pending.id, { credits: "1.5" });
+    assert.ok(result.resultLink.includes("/courses/LOCAL-201"));
+    const original = await row(db, pending.id);
+    assert.equal(original.credits, 2);
+    assert.equal(JSON.parse(original.approved_payload).credits, 1.5);
+    const snapshot = await stats(db);
+    await executeScript(
+      db,
+      "INSERT INTO course_section(lid,course_id,college,elective_type,credits) VALUES ('temporary','001','学院','选修',0.5);",
+    );
+    assert.equal((await stats(db)).sections, snapshot.sections + 1);
+    await db.prepare("UPDATE course_reviews SET lid='temporary' WHERE id=17").run();
+    assert.equal((await db.prepare("SELECT review_count FROM course_section WHERE lid='s1'").first()).review_count, 0);
+    assert.equal(
+      (await db.prepare("SELECT review_count FROM course_section WHERE lid='temporary'").first()).review_count,
+      1,
+    );
+    await db.prepare("DELETE FROM course_reviews WHERE id=17").run();
+    assert.equal((await stats(db)).reviews, snapshot.reviews - 1);
+    await db.prepare("DELETE FROM course_section WHERE lid='temporary'").run();
+    assert.equal((await stats(db)).sections, snapshot.sections);
+  }, true);
+});
+
+test("0010 executes as a single D1 batch and an intermediate failure restores all original rows and objects", async () => {
+  await fixture(async (db) => {
+    const pending = await submit(db);
+    await decide(db, pending.id);
+    const before = await databaseSnapshot(db);
+    for (const table of ["course_section", "catalog_submissions"]) {
+      const dropAt = decimalMigration.findIndex(
+        (sql) => sql.trim() === `DROP TABLE ${table};` || sql.trim() === `DROP TABLE ${table}`,
+      );
+      assert.ok(dropAt >= 0);
+      const failed = [
+        ...decimalMigration.slice(0, dropAt + 1),
+        "SELECT missing_column FROM site_stats",
+        ...decimalMigration.slice(dropAt + 1),
+      ];
+      await assert.rejects(migrateCredits(db, failed), /missing_column/);
+      assert.deepEqual(await databaseSnapshot(db), before);
+      assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+    }
+    await migrateCredits(db);
+    assert.deepEqual(await databaseSnapshot(db), before);
+  }, true);
+});
+
+test("fractional course credits publish directly or after approval and appear in facets, detail and exact filters", async () => {
+  await fixture(async (db) => {
+    const direct = await submit(db, { ...sample, courseId: "LOCAL-HALF", credits: "0.5" }, 1);
+    assert.equal(direct.result.status, 303);
+    const pending = await submit(db, { ...sample, courseId: "LOCAL-QUARTER", credits: "1.25" }, 2);
+    assert.equal((await row(db, pending.id)).status, "pending");
+    await decide(db, pending.id, { courseId: "LOCAL-QUARTER", credits: "1.5" });
+    assert.equal((await row(db, pending.id)).credits, 1.25);
+    assert.equal(JSON.parse((await row(db, pending.id)).approved_payload).credits, 1.5);
+    for (const [credits, courseId] of [
+      ["0.5", "LOCAL-HALF"],
+      ["1.5", "LOCAL-QUARTER"],
+    ]) {
+      const list = await publicCourses(event(db, null, `/courses?credits=${credits}`));
+      assert.equal(list.total, 1);
+      assert.equal(list.sections[0].course_id, courseId);
+      assert.equal(list.sections[0].credits, Number(credits));
+      const detailEvent = event(db, null, `/courses/${courseId}`);
+      detailEvent.params.courseId = courseId;
+      assert.equal((await courses.load(detailEvent)).sections[0].credits, Number(credits));
+    }
+    const options = await loadCatalogPublicData(db, new URL("https://lxk.shoumc.com"));
+    assert.ok(options.options.credits.includes(0.5));
+    assert.ok(options.options.credits.includes(1.5));
+    assert.equal((await publicCourses(event(db, null, "/courses?credits=1.25"))).total, 0);
+    assert.equal((await publicCourses(event(db, null, "/courses?credits=0"))).total, 0, "0.5 is not truncated to zero");
+    assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+  });
+});
 
 test("0009 adds empty private tables without replaying historical catalog or review data", async () => {
   const local = await localD1();
@@ -235,7 +427,7 @@ test("retries/duplicates and concurrent proposals cannot bypass hourly or outsta
     assert.equal((await submit(db, sample, 3)).result.status, 409);
     assert.equal((await submit(db, { kind: "teacher", name: "已有老师" })).result.status, 409);
     assert.equal((await submit(db, { ...sample, courseId: "001" })).result.status, 409);
-    assert.equal((await submit(db, { ...sample, credits: "1.5" })).result.status, 400);
+    assert.equal((await submit(db, { ...sample, credits: "30.5" })).result.status, 400);
     const attempts = await Promise.all(
       Array.from({ length: 8 }, (_, n) => submit(db, { kind: "teacher", name: `并发老师${n}` })),
     );

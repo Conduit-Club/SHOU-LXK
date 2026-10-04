@@ -302,13 +302,25 @@ try {
           courseId: "HTTP-NEW",
           college: "Fixture college",
           electiveType: "Fixture type",
-          credits: "2",
+          credits: "0.5",
           submissionId: courseId,
         })
       ).status,
       303,
     );
     assert.equal((await request(`/courses/HTTP-NEW?lid=community-${courseId}`, 2)).status, 200);
+    assert.equal(
+      (await db.prepare("SELECT credits FROM course_section WHERE course_id='HTTP-NEW'").first()).credits,
+      0.5,
+    );
+    const filteredHalf = await request("/courses?credits=0.5", 2);
+    assert.equal(filteredHalf.status, 200);
+    assert.ok((await filteredHalf.text()).includes("Local HTTP maintenance course"));
+    assert.equal(
+      (await (await request("/courses?credits=0", 2)).text()).includes("Local HTTP maintenance course"),
+      false,
+    );
+    checks += 2;
     checks++;
     expireAdminDuringCaptcha = true;
     const failedId = crypto.randomUUID();

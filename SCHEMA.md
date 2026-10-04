@@ -1,6 +1,6 @@
 # SHOU LXK database schema
 
-[`schema.sql`](schema.sql) defines the current SQLite and Cloudflare D1 schema. All tables are `STRICT`. Course IDs and section `lid` values are `TEXT` to preserve source codes and leading zeroes. `credits`, `likes`, and `dislikes` are `INTEGER`; the two counters default to zero and must be nonnegative.
+[`schema.sql`](schema.sql) defines the current SQLite and Cloudflare D1 schema. All tables are `STRICT`. Course IDs and section `lid` values are `TEXT` to preserve source codes and leading zeroes. `credits` is nonnegative `REAL` and retains decimal values such as 0.5; `likes` and `dislikes` remain nonnegative `INTEGER` counters defaulting to zero. New catalog proposals accept credits from 0 through 30, while existing section values are preserved without imposing a new historical upper bound.
 
 | Table                     | Grain                                       | Rows in the 2026-10-02 archive |
 | ------------------------- | ------------------------------------------- | -----------------------------: |
@@ -63,3 +63,11 @@ Deploy the migration and application together during a maintenance window: the o
 ## 目录补充审核（0009）
 
 新增私有提案与审核审计表、4个索引和4个触发器；不回填或重建历史目录、点评。批准时在同一事务新增可点评课段。字段、权限、限频和上线顺序见 [CATALOG_SUBMISSIONS.md](docs/CATALOG_SUBMISSIONS.md)。
+
+## 小数学分（0010）
+
+[`0010_decimal_credits.sql`](migrations/0010_decimal_credits.sql) changes `course_section.credits` and `catalog_submissions.credits` from INTEGER to REAL. Apply this new migration once before deploying fractional-credit writes; do not edit or replay earlier migrations. Fresh `schema.sql` already includes the new types.
+
+The migration copies only the two parent tables with explicit original columns and rowids. It preserves every proposal status, reason, raw approved/audit JSON, likes/dislikes, review count and section identifier. Child tables, reviews, archives, teacher memberships and audit rows are never copied or rewritten. Incoming foreign keys use NO ACTION. D1 executes the split migration statements in one transaction with deferred foreign-key checks; the three external section-review count triggers are removed temporarily and restored alongside all original parent indexes and guards. Site statistics do not fire during the copies. One bounded `PRAGMA optimize` refreshes rebuilt-index statistics. This incurs one-time parent-copy/index-construction I/O, without changing public query shapes or adding per-request scans. See [Cloudflare's foreign-key guidance](https://developers.cloudflare.com/d1/sql-api/foreign-keys/) and [SQLite's DROP TABLE semantics](https://www.sqlite.org/lang_droptable.html).
+
+Local workerd D1 tests apply the migration using the pinned Wrangler statement splitter and a single `DB.batch`, asserting old pending/approved/rejected rows, audit JSON, rowids, all schema objects, foreign keys and counters. Injected failures immediately after each parent DROP verify transaction rollback; new fractional proposals and direct publication verify the final schema and exact filtering. Back up and use a maintenance window for the production schema change; no test writes should target production.
