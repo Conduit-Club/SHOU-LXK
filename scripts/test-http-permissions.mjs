@@ -3,7 +3,7 @@
 import "../tests/helpers/server-imports.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { localD1, executeScript } from "../tests/helpers/local-d1.mjs";
+import { localD1, executeScript, measureDatabase } from "../tests/helpers/local-d1.mjs";
 const { tokenHash } = await import("../src/lib/server/auth.ts");
 const { Server } = await import("../.svelte-kit/output/server/index.js");
 const { manifest } = await import("../.svelte-kit/output/server/manifest.js");
@@ -58,6 +58,7 @@ try {
   async function request(path, user = null, values, options = {}) {
     const url = new URL(path, "https://lxk.invalid");
     const headers = new Headers();
+    headers.set("accept", options.accept ?? "text/html");
     headers.set(
       "cookie",
       `${user ? `__Host-lxk-session=${String(user).repeat(43)};` : ""} lxk-management-mode=1; isAdmin=true; roles=admin`,
@@ -66,13 +67,31 @@ try {
       headers.set("origin", options.origin ?? url.origin);
       headers.set("content-type", "application/x-www-form-urlencoded");
     }
-    return server.respond(
+    const response = await server.respond(
       new Request(url, {
         headers,
         ...(values ? { method: "POST", body: new URLSearchParams({ csrfToken: `http-csrf-${user}`, ...values }) } : {}),
       }),
       { platform: { env }, getClientAddress: () => "127.0.0.1" },
     );
+    // Kit rejects cross-site form POSTs before calling application hooks.
+    // That response is fixed plaintext, never a frameable private HTML page.
+    if (options.origin && options.origin !== url.origin) {
+      assert.equal(response.status, 403);
+      const contentType = response.headers.get("content-type");
+      assert.ok(contentType === null || contentType.startsWith("text/plain"));
+      assert.equal(await response.clone().text(), "Cross-site POST form submissions are forbidden");
+      return response;
+    }
+    assert.equal(response.headers.get("content-security-policy"), "frame-ancestors 'none'", path);
+    assert.equal(response.headers.get("x-frame-options"), "DENY", path);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff", path);
+    assert.equal(
+      response.headers.get("referrer-policy"),
+      url.pathname.startsWith("/auth/") ? "no-referrer" : "strict-origin-when-cross-origin",
+      path,
+    );
+    return response;
   }
   for (const user of [null, 2]) {
     for (const path of ["/", "/reviews", "/courses/HTTP-1", "/teachers/1", "/submissions?kind=teacher"]) {
@@ -118,8 +137,140 @@ try {
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM moderation_events").first()).n, 0);
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submission_events").first()).n, 0);
   assert.equal((await db.prepare("SELECT reviews FROM site_stats WHERE id=1").first()).reviews, 2);
+  const bounded = measureDatabase(db);
+  env.DB = bounded.db;
+  assert.equal((await request("/courses/HTTP-1?/submitReview", 2, { content: "x".repeat(64 * 1024) })).status, 413);
+  assert.equal(bounded.metrics.queries, 0, "oversized POST is rejected before session or action SQL");
+  env.DB = db;
+  checks++;
+  const previousFetch = globalThis.fetch;
+  let captchaCalls = 0;
+  env.TURNSTILE_SECRET_KEY = "http-fixture-secret";
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.href === "https://challenges.cloudflare.com/turnstile/v0/siteverify") {
+      captchaCalls++;
+      const values = new URLSearchParams(await request.text());
+      assert.equal(values.get("secret"), "http-fixture-secret");
+      const token = values.get("response");
+      assert.ok(["http-review", "http-catalog"].includes(token));
+      return Response.json({
+        success: true,
+        hostname: "lxk.invalid",
+        action: token === "http-review" ? "submit_review" : "submit_catalog",
+      });
+    }
+    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return previousFetch(input, init);
+    throw new Error("Unexpected external fetch in a local HTTP fixture");
+  };
+  try {
+    for (const [path, table] of [
+      ["/courses/HTTP-1?/submitReview", "course_reviews"],
+      ["/teachers/1?/submitReview", "teacher_reviews"],
+    ]) {
+      for (const visibility of ["anonymous", "username"]) {
+        assert.equal(
+          (
+            await request(path, 2, {
+              title: "HTTP publication fixture",
+              content: "Only local data",
+              lid: "http-section",
+              visibility,
+              "cf-turnstile-response": "http-review",
+              author_id: "1",
+              username: "forged",
+              avatar: "https://evil.invalid/avatar.png",
+            })
+          ).status,
+          303,
+        );
+        const review = await db
+          .prepare(
+            `SELECT author_id,is_anonymous,public_username,public_avatar_url FROM ${table} ORDER BY id DESC LIMIT 1`,
+          )
+          .first();
+        assert.equal(review.author_id, 2);
+        assert.equal(review.is_anonymous, visibility === "anonymous" ? 1 : 0);
+        assert.equal(review.public_username, visibility === "anonymous" ? null : "http_2");
+        assert.equal(review.public_avatar_url, null);
+        checks++;
+      }
+      assert.equal(
+        (
+          await request(path, 2, {
+            csrfToken: "forged",
+            title: "Must not publish",
+            content: "Denied",
+            "cf-turnstile-response": "http-review",
+          })
+        ).status,
+        403,
+      );
+      checks++;
+    }
+    const id = crypto.randomUUID();
+    assert.equal(
+      (
+        await request("/submissions?/submit", 2, {
+          kind: "teacher",
+          name: "Local HTTP pending teacher",
+          note: "Private proposal",
+          submissionId: id,
+          "cf-turnstile-response": "http-catalog",
+        })
+      ).status,
+      303,
+    );
+    const proposal = await db.prepare("SELECT author_id,status FROM catalog_submissions WHERE id=?").bind(id).first();
+    assert.deepEqual(proposal, { author_id: 2, status: "pending" });
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM teachers").first()).n, 1);
+    const enhanced = await request(
+      "/courses/HTTP-1?/submitReview",
+      2,
+      {
+        title: "Enhanced local fixture",
+        content: "Local action JSON",
+        lid: "http-section",
+        visibility: "anonymous",
+        "cf-turnstile-response": "http-review",
+      },
+      { accept: "application/json" },
+    );
+    assert.equal(enhanced.status, 200);
+    const actionRedirect = await enhanced.json();
+    assert.equal(actionRedirect.type, "redirect");
+    assert.equal(actionRedirect.status, 303);
+    assert.equal((await db.prepare("SELECT reviews FROM site_stats WHERE id=1").first()).reviews, 7);
+    assert.equal(captchaCalls, 6, "bad CSRF never reaches captcha verification");
+    checks++;
+    checks++;
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  for (const [path, user, values, status] of [
+    ["/missing-security-fixture", null, undefined, 404],
+    ["/auth/callback", null, undefined, 400],
+    ["/auth/logout", null, { returnTo: "/reviews" }, 303],
+    ["/admin/mode", 2, { enabled: "1" }, 403],
+  ]) {
+    assert.equal((await request(path, user, values)).status, status, path);
+    checks++;
+  }
+  env.MAINTENANCE_MODE = "true";
+  assert.equal((await request("/")).status, 503);
+  assert.equal((await request("/auth/callback")).status, 503);
+  checks += 2;
+  env.MAINTENANCE_MODE = "false";
+  env.DB = {
+    prepare() {
+      throw new Error("Synthetic local database failure");
+    },
+  };
+  assert.equal((await request("/teachers")).status, 500);
+  checks++;
   console.log(
-    `Built SSR HTTP permission checks: ${checks} passed (guest/user/admin, forged cookie, direct endpoints, CSRF, expiry).`,
+    `Built SSR HTTP permission checks: ${checks} passed (guest/user/admin, forged cookie, direct endpoints, CSRF, expiry, security headers on errors/redirects/maintenance).`,
   );
 } finally {
   await local.close();

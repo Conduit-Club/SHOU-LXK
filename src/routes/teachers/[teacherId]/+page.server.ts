@@ -2,7 +2,7 @@ import { getBindings } from "#lib/server/platform.js";
 import { error, fail, redirect } from "@sveltejs/kit";
 import { verifyTurnstile } from "#lib/server/turnstile.js";
 import { invalidateHomeReviews } from "#lib/server/home-cache.js";
-import { reviewSession, writeReview } from "#lib/server/auth.js";
+import { reviewSession, reviewWriteGuard, writeReview } from "#lib/server/auth.js";
 import { publicReviewProjection, reviewIdentity } from "#lib/server/review-identity.js";
 import type { PublicReviewIdentity } from "#lib/server/review-identity.js";
 import { loadManagedReviews, managementContext } from "#lib/server/moderation.js";
@@ -103,10 +103,12 @@ export const actions: Actions = {
       return fail(400, { message: "请填写标题（最多120字）和正文（最多5000字）。", ...values });
     }
     const postedAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
+    const guard = reviewWriteGuard(session, getBindings(platform));
     const result = await writeReview(
       db
         .prepare(
-          "INSERT INTO teacher_reviews (teacher_id, title, content, posted_at_local, author_id, is_anonymous, public_username, public_avatar_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          `INSERT INTO teacher_reviews (teacher_id, title, content, posted_at_local, author_id, is_anonymous, public_username, public_avatar_url)
+          SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ${guard.sql}`,
         )
         .bind(
           teacher.id,
@@ -117,7 +119,10 @@ export const actions: Actions = {
           identity.anonymous,
           identity.username,
           identity.avatar,
+          ...guard.values,
         ),
+      db,
+      session.userId,
     );
     await invalidateHomeReviews(url);
     console.info(

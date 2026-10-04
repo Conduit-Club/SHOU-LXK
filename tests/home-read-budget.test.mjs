@@ -20,6 +20,7 @@ const { HOME_TTL, loadHomePublicData, readHomeCache, invalidateHomeReviews } =
 const home = await import("../src/routes/courses/+page.server.ts");
 const courses = await import("../src/routes/courses/[courseId]/+page.server.ts");
 const teachers = await import("../src/routes/teachers/[teacherId]/+page.server.ts");
+const { readSession, tokenHash } = await import("../src/lib/server/auth.ts");
 
 async function fixture(run) {
   const local = await localD1();
@@ -316,8 +317,16 @@ test("successful course/teacher actions invalidate public data; invalid Turnstil
 
     await db
       .prepare(
-        "INSERT INTO auth_users (id, issuer, subject, name, created_at, last_login_at) VALUES (1, 'https://auth.test', 'local-user', 'Local user', 1, 1)",
+        "INSERT INTO auth_users (id, issuer, subject, name, username, created_at, last_login_at) VALUES (1, 'https://auth.shoumc.com/api/auth', 'local-user', 'Local user', 'local_user', 1, 1)",
       )
+      .run();
+    const sessionToken = "h".repeat(43);
+    const now = Math.floor(Date.now() / 1000);
+    await db
+      .prepare(
+        "INSERT INTO auth_sessions(token_hash,user_id,csrf_token,created_at,expires_at) VALUES (?,1,'local-test-csrf',?,?)",
+      )
+      .bind(await tokenHash(sessionToken), now, now + 3600)
       .run();
     const cache = new MemoryCache();
     const previousCaches = globalThis.caches;
@@ -344,23 +353,18 @@ test("successful course/teacher actions invalidate public data; invalid Turnstil
           form.set("content", "local test");
           form.set("cf-turnstile-response", "local-only-token");
           form.set("csrfToken", "local-test-csrf");
-          return {
-            platform: { env: { DB: db, TURNSTILE_SECRET_KEY: "unit-test-secret" } },
+          const result = {
+            platform: { env: { DB: db, TURNSTILE_SECRET_KEY: "unit-test-secret", OIDC_ALLOW_LOCAL_HTTP: "true" } },
             params: { courseId: "001", teacherId: "1" },
             url: actionUrl,
             request: new Request(actionUrl, { method: "POST", body: form, headers: { Origin: actionUrl.origin } }),
-            locals: {
-              getSession: async () => ({
-                userId: 1,
-                csrfToken: "local-test-csrf",
-                name: "local_user",
-                username: "local_user",
-                avatarUrl: null,
-                expiresAt: 9999999999,
-              }),
-            },
+            cookies: { get: (name) => (name === "lxk-dev-session" ? sessionToken : undefined), delete() {} },
+            locals: {},
             fetch: async () => Response.json(verification),
           };
+          let session;
+          result.locals.getSession = () => (session ??= readSession(result));
+          return result;
         };
         const action = (reviewType === "course" ? courses : teachers).actions.submitReview;
         const before = await db.prepare(SITE_STATS_SQL).first();

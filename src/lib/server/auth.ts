@@ -152,9 +152,29 @@ export function localBanError(reason: unknown): boolean {
   return String(reason).includes("LXK_USER_BANNED");
 }
 
-export async function writeReview(statement: D1PreparedStatement) {
+export function reviewWriteGuard(session: AuthSession, env: Bindings) {
+  // Siteverify is asynchronous. Recheck the exact session in the INSERT so
+  // logout, expiry, rotation or a ban/unban cannot revive an in-flight request.
+  return {
+    sql: `EXISTS (SELECT 1 FROM auth_sessions s JOIN auth_users u ON u.id=s.user_id
+      WHERE s.token_hash=? AND s.user_id=? AND s.expires_at>unixepoch() AND s.csrf_token=?
+        AND u.issuer=? AND u.username=? AND u.banned_at IS NULL)`,
+    values: [session.sessionHash, session.userId, session.csrfToken, trustedIssuer(env), session.username],
+  };
+}
+
+export async function writeReview(statement: D1PreparedStatement, db: D1Database, userId: number) {
   try {
-    return await statement.run();
+    const result = await statement.run();
+    if (!result.meta.changes) {
+      const user = await db
+        .prepare("SELECT banned_at FROM auth_users WHERE id=?")
+        .bind(userId)
+        .first<{ banned_at: number | null }>();
+      if (user?.banned_at !== null && user?.banned_at !== undefined) error(403, "此账号已被本站封禁，无法发表点评。");
+      error(401, "登录状态已失效，请重新登录后发表点评。");
+    }
+    return result;
   } catch (reason) {
     if (localBanError(reason)) error(403, "此账号已被本站封禁，无法发表点评。");
     throw reason;

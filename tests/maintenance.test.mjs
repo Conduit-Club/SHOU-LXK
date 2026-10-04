@@ -8,6 +8,7 @@ test("maintenance blocks loaders, data requests and writes without touching D1",
     ["GET", "/"],
     ["GET", "/courses/7109911/__data.json"],
     ["POST", "/courses/7109911?/submitReview"],
+    ["GET", "/auth/login"],
   ]) {
     const response = await handle({
       event: {
@@ -20,6 +21,7 @@ test("maintenance blocks loaders, data requests and writes without touching D1",
           },
         },
         request: new Request("https://local.test" + path, { method }),
+        url: new URL("https://local.test" + path),
       },
       resolve: () => {
         throw Error("Application must not be resolved");
@@ -28,6 +30,13 @@ test("maintenance blocks loaders, data requests and writes without touching D1",
     assert.equal(response.status, 503);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal(response.headers.get("retry-after"), "600");
+    assert.equal(response.headers.get("content-security-policy"), "frame-ancestors 'none'");
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(
+      response.headers.get("referrer-policy"),
+      path.startsWith("/auth/") ? "no-referrer" : "strict-origin-when-cross-origin",
+    );
     assert.match(await response.text(), /网站暂时维护中/);
   }
 });
@@ -37,6 +46,7 @@ test("maintenance only ends when the operator explicitly disables it", async () 
     const expected = new Response("normal page");
     const event = {
       platform: { env: { MAINTENANCE_MODE: value } },
+      request: new Request("https://local.test/"),
       locals: {},
       url: new URL("https://local.test/"),
       cookies: { get: () => undefined },
@@ -52,4 +62,21 @@ test("maintenance only ends when the operator explicitly disables it", async () 
       expected,
     );
   }
+});
+
+test("security headers retain existing CSP script and nonce restrictions", async () => {
+  const url = new URL("https://local.test/admin");
+  const response = await handle({
+    event: { platform: { env: {} }, request: new Request(url), locals: {}, url, cookies: { get: () => undefined } },
+    resolve: async () =>
+      new Response("private page", {
+        headers: { "Content-Security-Policy": "script-src 'nonce-local'; frame-ancestors 'self'" },
+      }),
+  });
+  assert.equal(
+    response.headers.get("content-security-policy"),
+    "script-src 'nonce-local'; frame-ancestors 'self', frame-ancestors 'none'",
+  );
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
 });

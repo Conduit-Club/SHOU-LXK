@@ -275,6 +275,64 @@ test("ban revokes every local session, blocks race-time writes and session creat
   });
 });
 
+test("revoked and expired sessions cannot publish course or teacher reviews after Turnstile returns", async () => {
+  await fixture(async (db) => {
+    const cache = new MemoryCache();
+    const previous = globalThis.caches;
+    globalThis.caches = { open: async () => cache };
+    try {
+      await loadLandingData(db, new URL("https://lxk.shoumc.com/"));
+      const entries = cache.entries.size;
+      for (const [module, path] of [
+        [courses, "/courses/001?/submitReview"],
+        [teachers, "/teachers/1?/submitReview"],
+      ]) {
+        for (const change of ["logout", "expiry", "ban-and-unban"]) {
+          const now = Math.floor(Date.now() / 1000);
+          await db.prepare("DELETE FROM auth_sessions WHERE user_id=2").run();
+          await db
+            .prepare(
+              "INSERT INTO auth_sessions(token_hash,user_id,csrf_token,created_at,expires_at) VALUES (?,2,'csrf-2',?,?)",
+            )
+            .bind(await auth.tokenHash(token(2)), now - 3600, now + 3600)
+            .run();
+          const form = new FormData();
+          for (const [name, value] of [
+            ["csrfToken", "csrf-2"],
+            ["title", "Late review"],
+            ["content", "Must not publish"],
+            ["lid", "s1"],
+            ["cf-turnstile-response", "local"],
+          ])
+            form.set(name, value);
+          const request = event(db, 2, path, {
+            method: "POST",
+            headers: { Origin: "https://lxk.shoumc.com" },
+            body: form,
+          });
+          request.params = { courseId: "001", teacherId: "1" };
+          request.fetch = async () => {
+            // This runs after the real session/CSRF check, just before the action's INSERT.
+            if (change === "logout") await db.prepare("DELETE FROM auth_sessions WHERE user_id=2").run();
+            else if (change === "expiry")
+              await db.prepare("UPDATE auth_sessions SET expires_at=unixepoch()-1 WHERE user_id=2").run();
+            else {
+              await db.prepare("UPDATE auth_users SET banned_at=unixepoch() WHERE id=2").run();
+              await db.prepare("UPDATE auth_users SET banned_at=NULL WHERE id=2").run();
+            }
+            return Response.json({ success: true, hostname: "lxk.shoumc.com", action: "submit_review" });
+          };
+          await assert.rejects(module.actions.submitReview(request), (reason) => reason.status === 401, change);
+          await checkCounts(db, 4);
+          assert.equal(cache.entries.size, entries, "denied submission must not invalidate public caches");
+        }
+      }
+    } finally {
+      globalThis.caches = previous;
+    }
+  });
+});
+
 test("stale administrator permission and protected-author changes cannot mutate after authority changes", async () => {
   await fixture(async (db) => {
     const context = await moderation.requireAdmin(event(db, 1));

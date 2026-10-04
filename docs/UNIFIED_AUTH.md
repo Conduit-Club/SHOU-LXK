@@ -30,6 +30,14 @@ scope 固定为 `openid profile email`，不申请 `offline_access`。回调必�
 
 新课程/教师点评将 `author_id` 写为服务端会话用户 ID，不能由表单指定作者。写请求要求同源 Origin、本站 CSRF token、已完成用户名资料的有效会话以及原有 Turnstile 的 hostname/action 校验。默认 `visibility=anonymous`：公开查询固定投影“匿名用户”和 NULL 头像。选择 `visibility=username` 时，用户名与头像快照只来自服务端可信会话，表单提交的姓名、头像和账号 ID 都不会被采用。快照随删除/恢复完整保留；作者替换或移除头像后旧图片可能失效，界面回退字符图标。
 
+点评的 INSERT 在同一条 SQL 内再次核对原会话 token、作者、有效期、CSRF、可信 issuer、用户名与封禁状态。验证码等待期间退出、会话到期、重新登录撤销旧会话或封禁后再解封，都不能让旧请求继续发布。拒绝时不增加点评计数、不清除公共缓存；原封禁触发器与管理员恢复原点评的事务保持不变。复现与回归用例见 `tests/moderation.test.mjs`。
+
+SSR 页面、数据、错误、重定向和维护响应统一返回 `Content-Security-Policy: frame-ancestors 'none'`、`X-Frame-Options: DENY` 和 `X-Content-Type-Options: nosniff`，防止管理界面被嵌套点击。普通路径使用 `strict-origin-when-cross-origin`，认证路径保留 `no-referrer`。CSP 仅限制嵌套，不增加脚本或验证码来源限制；实际构建的响应头回归在 `scripts/test-http-permissions.mjs`。
+
+SvelteKit 在调用应用 hook 之前拒绝跨站表单 POST，该固定纯文本 403 不经过上述响应头处理，不包含私有页面或账号资料；保留框架 Origin 防护。静态资源由 Cloudflare Assets 独立处理。
+
+本站没有图片上传表单，所有 POST 在解析表单与读取会话前按实际流字节限制为 64 KiB；不依赖可缺失或伪造的 `Content-Length`。超限取消流并返回禁止缓存的 413，传输失败返回统一 400，均不访问 D1。上限包括 URL 编码和 multipart 边界开销；正常点评、目录、管理和退出表单保持原 CSRF/Origin 校验。合成流回归见 `tests/request-body.test.mjs`。
+
 旧点评不猜测作者；已有归属、原文与旧资料都保留，新增匿名字段默认开启。公开查询和公共缓存从不包含 `author_id`、subject、邮箱、封禁状态或管理资料。删除本站用户时，点评内容和已公开署名快照仍保留，私有作者关联置空。
 
 退出使用 `POST /auth/logout`，校验 Origin 与 CSRF 后撤销本站会话、删除 Cookie。**退出本站不会退出账号中心；中心退出或禁用账号也不会立即撤销已有 LXK 会话。** 现有本站会话最多继续有效 8 小时。后续本站管理阶段已加入管理员权限和 LXK 封禁；本站封禁立即撤销本地会话并禁止新点评，详见 [内容管理](ADMIN_MODERATION.md)。中心实时撤销同步、全站退出和“我的点评”仍未加入。
