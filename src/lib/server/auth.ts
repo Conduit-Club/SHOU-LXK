@@ -14,14 +14,16 @@ export type AuthSession = {
   name: string;
   csrfToken: string;
   expiresAt: number;
+  isAdmin: boolean;
+  sessionHash: string;
 };
 type AuthEvent = Pick<RequestEvent, "platform" | "url" | "cookies" | "locals" | "request">;
 type Bindings = App.Platform["env"];
 type Settings = { issuer: URL; clientId: string; secret: string; callback: URL; localHttp: boolean };
 
 class AuthFailure extends Error {
-  status: 400 | 503;
-  constructor(status: 400 | 503) {
+  status: 400 | 403 | 503;
+  constructor(status: 400 | 403 | 503) {
     super("Authentication failed");
     this.status = status;
   }
@@ -114,6 +116,37 @@ export const tokenHash = async (token: string) =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 
+export function normalizedEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254 ? email : null;
+}
+
+export async function adminEmailHashes(env: Bindings): Promise<string[]> {
+  const emails = (env.LXK_ADMIN_EMAILS ?? "")
+    .split(/[,;\n]/)
+    .map(normalizedEmail)
+    .filter((email): email is string => !!email);
+  return Promise.all([...new Set(emails)].map(tokenHash));
+}
+
+export function trustedIssuer(env: Bindings): string {
+  return env.OIDC_ISSUER ?? "https://auth.shoumc.com/api/auth";
+}
+
+export function localBanError(reason: unknown): boolean {
+  return String(reason).includes("LXK_USER_BANNED");
+}
+
+export async function writeReview(statement: D1PreparedStatement) {
+  try {
+    return await statement.run();
+  } catch (reason) {
+    if (localBanError(reason)) error(403, "此账号已被本站封禁，无法发表点评。");
+    throw reason;
+  }
+}
+
 function cookieName(url: URL, type: "session" | "login") {
   return url.protocol === "https:" ? `__Host-lxk-${type}` : `lxk-dev-${type}`;
 }
@@ -144,13 +177,26 @@ export async function readSession(event: Pick<AuthEvent, "platform" | "url" | "c
     return null;
   if (!env.DB) return null;
   const record =
-    await env.DB.prepare(`SELECT u.id AS userId, u.name, s.csrf_token AS csrfToken, s.expires_at AS expiresAt
+    await env.DB.prepare(`SELECT u.id AS userId, u.name, s.csrf_token AS csrfToken, s.expires_at AS expiresAt,
+        s.token_hash AS sessionHash, u.issuer, u.verified_email_hash AS emailHash
       FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id
-      WHERE s.token_hash = ? AND s.expires_at > ?`)
+      WHERE s.token_hash = ? AND s.expires_at > ? AND u.banned_at IS NULL`)
       .bind(await tokenHash(token), seconds())
-      .first<AuthSession>();
+      .first<Omit<AuthSession, "isAdmin"> & { issuer: string; emailHash: string | null }>();
   if (!record) clearCookie(event.cookies, event.url, "session");
-  return record;
+  if (!record) return null;
+  const isAdmin =
+    record.issuer === trustedIssuer(env) &&
+    !!record.emailHash &&
+    (await adminEmailHashes(env)).includes(record.emailHash);
+  return {
+    userId: record.userId,
+    name: record.name,
+    csrfToken: record.csrfToken,
+    expiresAt: record.expiresAt,
+    sessionHash: record.sessionHash,
+    isAdmin,
+  };
 }
 
 export function requestSession(event: AuthEvent): Promise<AuthSession | null> {
@@ -249,18 +295,29 @@ export async function completeLogin(event: AuthEvent, fetcher?: oidc.CustomFetch
   const claims = tokens.claims();
   if (!claims || !claims.sub || claims.sub.length > 255) throw new AuthFailure(400);
   const userInfo =
-    claims.email_verified === undefined
+    claims.email_verified === undefined || claims.email === undefined
       ? await oidc.fetchUserInfo(provider, tokens.access_token, claims.sub)
       : undefined;
   if ((claims.email_verified ?? userInfo?.email_verified) !== true) throw new AuthFailure(400);
+  // Email and its verification flag must come from the same verified source.
+  // Never combine an ID Token's email with UserInfo's verification boolean.
+  const email =
+    claims.email_verified === true && normalizedEmail(claims.email)
+      ? normalizedEmail(claims.email)
+      : userInfo?.email_verified === true
+        ? normalizedEmail(userInfo.email)
+        : null;
+  const emailHash = email ? await tokenHash(email) : null;
   const rawName = claims.name ?? userInfo?.name;
   const name = typeof rawName === "string" && rawName.trim() ? rawName.trim().slice(0, 160) : "海大同学";
   const user = await db
-    .prepare(`INSERT INTO auth_users (issuer, subject, name, created_at, last_login_at) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT (issuer, subject) DO UPDATE SET name = excluded.name, last_login_at = excluded.last_login_at RETURNING id`)
-    .bind(config.issuer.href, claims.sub, name, seconds(), seconds())
-    .first<{ id: number }>();
+    .prepare(`INSERT INTO auth_users (issuer, subject, name, created_at, last_login_at, verified_email_hash) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (issuer, subject) DO UPDATE SET name = excluded.name, last_login_at = excluded.last_login_at,
+        verified_email_hash = excluded.verified_email_hash RETURNING id, banned_at`)
+    .bind(config.issuer.href, claims.sub, name, seconds(), seconds(), emailHash)
+    .first<{ id: number; banned_at: number | null }>();
   if (!user) throw new AuthFailure(503);
+  if (user.banned_at !== null) throw new AuthFailure(403);
   const token = oidc.randomState();
   const oldToken = event.cookies.get(cookieName(event.url, "session"));
   const statements = [
@@ -273,7 +330,12 @@ export async function completeLogin(event: AuthEvent, fetcher?: oidc.CustomFetch
   if (oldToken && TOKEN_PATTERN.test(oldToken)) {
     statements.push(db.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").bind(await tokenHash(oldToken)));
   }
-  await db.batch(statements);
+  try {
+    await db.batch(statements);
+  } catch (reason) {
+    if (localBanError(reason)) throw new AuthFailure(403);
+    throw reason;
+  }
   setCookie(event.cookies, event.url, "session", token, SESSION_TTL);
   return safeReturnTo(transaction.return_to);
 }
@@ -299,5 +361,12 @@ export function authError(reason: unknown): never {
   // Never log codes, tokens, email addresses, query strings or provider errors.
   const status = reason instanceof AuthFailure ? reason.status : 503;
   console.warn(JSON.stringify({ event: "auth_failed", status }));
-  error(status, status === 400 ? "登录请求已失效，请重新登录。" : "账号服务暂时不可用，请稍后重试。");
+  error(
+    status,
+    status === 400
+      ? "登录请求已失效，请重新登录。"
+      : status === 403
+        ? "此账号已被本站封禁，请联系管理员。"
+        : "账号服务暂时不可用，请稍后重试。",
+  );
 }

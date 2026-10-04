@@ -20,7 +20,7 @@ scope 固定为 `openid profile email`，不申请 `offline_access`。回调必�
 
 ## 本站会话与点评
 
-`auth_users` 以 `issuer + subject` 唯一对应账号，保存有限长度的显示名；邮箱不作为永久身份，也不保存到本站数据库。`auth_sessions` 保存 SHA-256 会话 token hash、用户 ID、独立 CSRF token 和绝对有效期。浏览器只持有随机 256-bit 不透明 token，Cookie 为 `__Host-lxk-session`，使用 `Path=/; HttpOnly; Secure; SameSite=Lax`，不设置 Domain。
+`auth_users` 以 `issuer + subject` 唯一对应账号，保存有限长度的显示名；邮箱不作为永久身份，也不保存明文到本站数据库。后续管理阶段以私有已验证邮箱 hash 匹配本站管理员白名单，见 [ADMIN_MODERATION.md](ADMIN_MODERATION.md)。`auth_sessions` 保存 SHA-256 会话 token hash、用户 ID、独立 CSRF token 和绝对有效期。浏览器只持有随机 256-bit 不透明 token，Cookie 为 `__Host-lxk-session`，使用 `Path=/; HttpOnly; Secure; SameSite=Lax`，不设置 Domain。
 
 会话为 **8 小时绝对期限**，普通浏览不延长期限，也不每次访问账号中心。没有会话 Cookie（或格式不合法）的浏览请求不执行认证 SQL；有效 Cookie 通过主键和用户索引查询本站会话，同一请求只查询一次。页面与 SvelteKit 数据响应使用 `Cache-Control: private, no-store` 和 `Vary: Cookie`；首页 Cache API 继续只缓存公共 JSON，绝不放账号、CSRF、作者关联或 Cookie。
 
@@ -28,7 +28,7 @@ scope 固定为 `openid profile email`，不申请 `offline_access`。回调必�
 
 新课程/教师点评将 `author_id` 写为服务端会话用户 ID，不能由表单指定作者。写请求要求同源 Origin、本站 CSRF token、有效会话以及原有 Turnstile 的 hostname/action 校验。旧点评的 `author_id` 保持 NULL，不猜测历史作者。公开点评继续匿名展示，不公开账号名称、邮箱或身份标识。删除本站用户时，点评仍保留，作者关联置空。
 
-退出使用 `POST /auth/logout`，校验 Origin 与 CSRF 后撤销本站会话、删除 Cookie。**退出本站不会退出账号中心；中心退出或禁用账号也不会立即撤销已有 LXK 会话。** 现有本站会话最多继续有效 8 小时。实时禁用同步、全站退出、业务封禁、角色管理和“我的点评”不属于本次第一阶段。
+退出使用 `POST /auth/logout`，校验 Origin 与 CSRF 后撤销本站会话、删除 Cookie。**退出本站不会退出账号中心；中心退出或禁用账号也不会立即撤销已有 LXK 会话。** 现有本站会话最多继续有效 8 小时。后续本站管理阶段已加入管理员权限和 LXK 封禁；本站封禁立即撤销本地会话并禁止新点评，详见 [内容管理](ADMIN_MODERATION.md)。中心实时撤销同步、全站退出和“我的点评”仍未加入。
 
 ## 本地联调
 

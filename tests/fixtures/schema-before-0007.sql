@@ -41,9 +41,6 @@ CREATE TABLE auth_users (
     name TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     last_login_at INTEGER NOT NULL,
-    verified_email_hash TEXT CHECK (verified_email_hash IS NULL OR length(verified_email_hash) = 64),
-    banned_at INTEGER,
-    ban_reason TEXT,
     UNIQUE (issuer, subject)
 ) STRICT;
 
@@ -79,7 +76,7 @@ CREATE TABLE course_section_teachers (
 CREATE INDEX course_section_teachers_teacher_idx ON course_section_teachers(teacher_id, lid);
 
 CREATE TABLE course_reviews (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     lid TEXT NOT NULL REFERENCES course_section(lid),
     title TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -109,7 +106,7 @@ BEGIN
 END;
 
 CREATE TABLE teacher_reviews (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     teacher_id INTEGER NOT NULL REFERENCES teachers(id),
     title TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -120,59 +117,6 @@ CREATE TABLE teacher_reviews (
 CREATE INDEX teacher_reviews_teacher_posted_idx ON teacher_reviews(teacher_id, posted_at_local, id);
 CREATE INDEX teacher_reviews_latest_idx ON teacher_reviews(posted_at_local DESC, id DESC, teacher_id);
 CREATE INDEX teacher_reviews_author_idx ON teacher_reviews(author_id);
-
--- Private, reversible moderation: active tables contain only public reviews.
-CREATE TABLE moderation_review_archive (
-    review_type TEXT NOT NULL CHECK (review_type IN ('course', 'teacher')),
-    review_id INTEGER NOT NULL CHECK (review_id > 0),
-    lid TEXT REFERENCES course_section(lid),
-    teacher_id INTEGER REFERENCES teachers(id),
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
-    posted_at_local TEXT NOT NULL,
-    author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
-    deleted_by INTEGER NOT NULL,
-    deleted_at INTEGER NOT NULL,
-    reason TEXT NOT NULL CHECK (length(trim(reason)) BETWEEN 1 AND 500),
-    operation_id TEXT NOT NULL UNIQUE,
-    PRIMARY KEY (review_type, review_id),
-    CHECK ((review_type = 'course' AND lid IS NOT NULL AND teacher_id IS NULL)
-        OR (review_type = 'teacher' AND teacher_id IS NOT NULL AND lid IS NULL))
-) STRICT;
-CREATE INDEX moderation_review_archive_latest_idx ON moderation_review_archive(review_type, deleted_at DESC, review_id DESC);
-
-CREATE TABLE moderation_events (
-    operation_id TEXT PRIMARY KEY,
-    actor_id INTEGER NOT NULL,
-    action TEXT NOT NULL CHECK (action IN ('archive_review', 'restore_review', 'ban_user', 'unban_user')),
-    review_type TEXT CHECK (review_type IN ('course', 'teacher')),
-    target_id INTEGER NOT NULL CHECK (target_id > 0),
-    reason TEXT NOT NULL CHECK (length(trim(reason)) BETWEEN 1 AND 500),
-    created_at INTEGER NOT NULL
-) STRICT;
-CREATE INDEX moderation_events_latest_idx ON moderation_events(created_at DESC, operation_id);
-
-CREATE TRIGGER auth_sessions_ban_guard BEFORE INSERT ON auth_sessions
-WHEN (SELECT banned_at FROM auth_users WHERE id = NEW.user_id) IS NOT NULL
-BEGIN SELECT RAISE(ABORT, 'LXK_USER_BANNED'); END;
-CREATE TRIGGER auth_sessions_ban_guard_update BEFORE UPDATE OF user_id ON auth_sessions
-WHEN (SELECT banned_at FROM auth_users WHERE id = NEW.user_id) IS NOT NULL
-BEGIN SELECT RAISE(ABORT, 'LXK_USER_BANNED'); END;
-CREATE TRIGGER auth_users_ban_revoke AFTER UPDATE OF banned_at ON auth_users
-WHEN NEW.banned_at IS NOT NULL
-BEGIN DELETE FROM auth_sessions WHERE user_id = NEW.id; END;
-CREATE TRIGGER course_reviews_ban_guard BEFORE INSERT ON course_reviews
-WHEN (SELECT banned_at FROM auth_users WHERE id = NEW.author_id) IS NOT NULL
-AND NOT EXISTS (SELECT 1 FROM moderation_review_archive a WHERE a.review_type = 'course'
-    AND a.review_id = NEW.id AND a.lid = NEW.lid AND a.author_id IS NEW.author_id
-    AND a.title = NEW.title AND a.content = NEW.content AND a.posted_at_local = NEW.posted_at_local)
-BEGIN SELECT RAISE(ABORT, 'LXK_USER_BANNED'); END;
-CREATE TRIGGER teacher_reviews_ban_guard BEFORE INSERT ON teacher_reviews
-WHEN (SELECT banned_at FROM auth_users WHERE id = NEW.author_id) IS NOT NULL
-AND NOT EXISTS (SELECT 1 FROM moderation_review_archive a WHERE a.review_type = 'teacher'
-    AND a.review_id = NEW.id AND a.teacher_id = NEW.teacher_id AND a.author_id IS NEW.author_id
-    AND a.title = NEW.title AND a.content = NEW.content AND a.posted_at_local = NEW.posted_at_local)
-BEGIN SELECT RAISE(ABORT, 'LXK_USER_BANNED'); END;
 
 CREATE TABLE category_options (
     category_type TEXT NOT NULL CHECK (category_type IN ('attr', 'college', 'lessonType', 'score')),
