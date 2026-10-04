@@ -119,16 +119,17 @@ export function moderationFilters(url: URL) {
   };
 }
 
-export async function loadManagedReviews(context: AdminContext, url: URL, scope: ReviewScope = {}) {
-  const { db, actor, issuer } = context;
-  const filters = moderationFilters(url);
-  const kind = scope.kind ?? filters.kind;
-  const deleted = filters.status === "deleted";
-  const values: (string | number)[] = [];
-  const branches = (kind === "all" ? ["course", "teacher"] : [kind]).map((type) => {
+function managedReviewBranches(
+  filters: ReturnType<typeof moderationFilters>,
+  scope: ReviewScope,
+  kind: string,
+  deleted: boolean,
+) {
+  return (kind === "all" ? ["course", "teacher"] : [kind]).map((type) => {
     const course = type === "course";
     const table = deleted ? "moderation_review_archive" : course ? "course_reviews" : "teacher_reviews";
     const clauses: string[] = [];
+    const values: (string | number)[] = [];
     if (deleted) {
       clauses.push("r.review_type=?");
       values.push(type);
@@ -152,40 +153,131 @@ export async function loadManagedReviews(context: AdminContext, url: URL, scope:
     if (filters.target) {
       clauses.push(
         course
-          ? "(instr(lower(c.name),lower(?))>0 OR instr(lower(c.course_id),lower(?))>0 OR r.lid=?)"
-          : "instr(lower(t.name),lower(?))>0",
+          ? `(r.lid IN (SELECT cs.lid FROM courses c CROSS JOIN course_section cs ON cs.course_id=c.course_id
+              WHERE instr(lower(c.name),lower(?))>0 OR instr(lower(c.course_id),lower(?))>0) OR r.lid=?)`
+          : "r.teacher_id IN (SELECT id FROM teachers WHERE instr(lower(name),lower(?))>0)",
       );
       values.push(...(course ? [filters.target, filters.target, filters.target] : [filters.target]));
     }
     if (filters.author) {
-      clauses.push("(instr(lower(COALESCE(u.username,'')),lower(?))>0 OR CAST(r.author_id AS TEXT)=?)");
+      // Foreign keys keep every non-null author attached to auth_users. Search
+      // the small user set once, then use review author indexes for membership.
+      clauses.push(
+        "r.author_id IN (SELECT id FROM auth_users WHERE instr(lower(COALESCE(username,'')),lower(?))>0 OR CAST(id AS TEXT)=?)",
+      );
       values.push(filters.author, filters.author.replace(/^#/, ""));
     }
     if (filters.ownership !== "all") clauses.push(`r.author_id IS ${filters.ownership === "known" ? "NOT " : ""}NULL`);
-    if (filters.banned !== "all") clauses.push(`u.banned_at IS ${filters.banned === "yes" ? "NOT " : ""}NULL`);
-    return `SELECT r.${deleted ? "review_id" : "id"} AS id, '${type}' AS review_type,
-      ${course ? "r.lid, c.course_id, c.name AS course_name, NULL AS teacher_id, NULL AS teacher_name, c.name" : "NULL AS lid, NULL AS course_id, NULL AS course_name, r.teacher_id, t.name AS teacher_name, t.name"} AS target_name,
-      r.title,r.content,r.posted_at_local,
-      CASE WHEN r.is_anonymous=0 THEN COALESCE(r.public_username,'匿名用户') ELSE '匿名用户' END AS display_name,
-      CASE WHEN r.is_anonymous=0 THEN r.public_avatar_url ELSE NULL END AS avatar_url,
-      r.author_id,COALESCE(u.username,u.name) AS author_name,u.banned_at,u.issuer AS author_issuer,u.role AS author_role,
-      ${deleted ? "r.reason,r.deleted_at" : "NULL AS reason,NULL AS deleted_at"}
-      FROM ${table} r ${course ? "JOIN course_section cs ON cs.lid=r.lid JOIN courses c ON c.course_id=cs.course_id" : "JOIN teachers t ON t.id=r.teacher_id"}
-      LEFT JOIN auth_users u ON u.id=r.author_id ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}`;
+    if (filters.banned === "yes")
+      clauses.push("r.author_id IN (SELECT id FROM auth_users WHERE banned_at IS NOT NULL)");
+    if (filters.banned === "no")
+      clauses.push(
+        "(r.author_id IS NULL OR r.author_id NOT IN (SELECT id FROM auth_users WHERE banned_at IS NOT NULL))",
+      );
+    // COUNT and candidate selection need only the joins used by predicates.
+    // Display fields/author profiles must not force a full-review-table join.
+    const joins = course && scope.courseId ? "JOIN course_section cs ON cs.lid=r.lid" : "";
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    return {
+      type,
+      course,
+      table,
+      id: deleted ? "review_id" : "id",
+      values,
+      where,
+      source: `FROM ${table} r ${joins} ${where}`,
+    };
   });
-  const query = branches.join(" UNION ALL ");
+}
+
+function managedReviewColumns(branch: ReturnType<typeof managedReviewBranches>[number], deleted: boolean) {
+  const { type, course, id } = branch;
+  return `r.${id} AS id, '${type}' AS review_type,
+    ${course ? "r.lid, c.course_id, c.name AS course_name, NULL AS teacher_id, NULL AS teacher_name, c.name" : "NULL AS lid, NULL AS course_id, NULL AS course_name, r.teacher_id, t.name AS teacher_name, t.name"} AS target_name,
+    r.title,r.content,r.posted_at_local,
+    CASE WHEN r.is_anonymous=0 THEN COALESCE(r.public_username,'匿名用户') ELSE '匿名用户' END AS display_name,
+    CASE WHEN r.is_anonymous=0 THEN r.public_avatar_url ELSE NULL END AS avatar_url,
+    r.author_id,COALESCE(u.username,u.name) AS author_name,u.banned_at,u.issuer AS author_issuer,u.role AS author_role,
+    ${deleted ? "r.reason,r.deleted_at" : "NULL AS reason,NULL AS deleted_at"}`;
+}
+
+export async function loadManagedReviews(context: AdminContext, url: URL, scope: ReviewScope = {}) {
+  const { db, actor, issuer } = context;
+  const filters = moderationFilters(url);
+  const kind = scope.kind ?? filters.kind;
+  const deleted = filters.status === "deleted";
+  const branches = managedReviewBranches(filters, scope, kind, deleted);
+  const filtered =
+    filters.q || filters.target || filters.author || filters.ownership !== "all" || filters.banned !== "all";
+  let countSql = `SELECT ${branches.map(({ source }) => `(SELECT COUNT(*) ${source})`).join(" + ")} AS total`;
+  let countValues = branches.flatMap(({ values }) => values);
+  if (!deleted && !filtered) {
+    if (kind === "all" && !scope.courseId && !scope.lid && !scope.teacherId) {
+      // Already maintained by the same insert/delete transactions, including
+      // moderation archive/restore. Never use a TTL cache for exact paging.
+      countSql = "SELECT reviews AS total FROM site_stats WHERE id=1";
+      countValues = [];
+    } else if (kind === "course" && (scope.courseId || scope.lid)) {
+      const clauses: string[] = [];
+      countValues = [];
+      if (scope.courseId) {
+        clauses.push("course_id=?");
+        countValues.push(scope.courseId);
+      }
+      if (scope.lid) {
+        clauses.push("lid=?");
+        countValues.push(scope.lid);
+      }
+      countSql = `SELECT COALESCE(SUM(review_count),0) AS total FROM course_section WHERE ${clauses.join(" AND ")}`;
+    }
+  }
   const count = await db
-    .prepare(`SELECT COUNT(*) AS total FROM (${query})`)
-    .bind(...values)
+    .prepare(countSql)
+    .bind(...countValues)
     .first<{ total: number }>();
   const paging = moderationPaging(url, count?.total ?? 0);
   const direction = url.searchParams.get("sort") === "oldest" ? "ASC" : "DESC";
-  const result = await db
-    .prepare(
-      `SELECT * FROM (${query}) ORDER BY ${deleted ? "deleted_at DESC" : `posted_at_local ${direction}`},review_type ASC,id ${direction} LIMIT ? OFFSET ?`,
-    )
-    .bind(...values, MODERATION_PAGE_SIZE, paging.offset)
-    .all<ReviewRow>();
+  const dateDirection = deleted ? "DESC" : direction;
+  const order = `sort_at ${dateDirection},review_type ASC,id ${direction}`;
+  // Each branch needs at most offset+pageSize IDs. Merge/page these lightweight
+  // candidates before fetching bodies, catalog names or private author data.
+  const candidates = branches.map(
+    ({ type, id, source }) => `${type}_candidates AS (
+    SELECT r.${id} AS id,'${type}' AS review_type,r.${deleted ? "deleted_at" : "posted_at_local"} AS sort_at
+    ${source} ORDER BY sort_at ${dateDirection},id ${direction} LIMIT ?
+  )`,
+  );
+  const display = branches.map((branch) => {
+    const { type, course, table, id } = branch;
+    return `SELECT ${managedReviewColumns(branch, deleted)},p.sort_at
+      FROM review_page p CROSS JOIN ${table} r ON r.${id}=p.id ${deleted ? "AND r.review_type=p.review_type" : ""}
+      ${course ? "CROSS JOIN course_section cs ON cs.lid=r.lid CROSS JOIN courses c ON c.course_id=cs.course_id" : "CROSS JOIN teachers t ON t.id=r.teacher_id"}
+      LEFT JOIN auth_users u ON u.id=r.author_id WHERE p.review_type='${type}'`;
+  });
+  let listSql = `WITH ${candidates.join(",")},review_page AS MATERIALIZED (
+        ${branches.map(({ type }) => `SELECT * FROM ${type}_candidates`).join(" UNION ALL ")}
+        ORDER BY ${order} LIMIT ? OFFSET ?
+      ) SELECT id,review_type,lid,course_id,course_name,teacher_id,teacher_name,target_name,title,content,
+        posted_at_local,display_name,avatar_url,author_id,author_name,banned_at,author_issuer,author_role,reason,deleted_at
+      FROM (${display.join(" UNION ALL ")}) ORDER BY ${order}`;
+  let listValues = branches.flatMap(({ values }) => [...values, paging.offset + MODERATION_PAGE_SIZE]);
+  if (branches.length === 1 && (scope.courseId || scope.lid || scope.teacherId)) {
+    // A detail page is already bounded by an indexed target. Avoid looking up
+    // those same review rows twice merely to construct the global feed page.
+    const branch = branches[0];
+    listSql = `SELECT ${managedReviewColumns(branch, deleted)} FROM ${branch.table} r
+      ${branch.course ? "JOIN course_section cs ON cs.lid=r.lid JOIN courses c ON c.course_id=cs.course_id" : "JOIN teachers t ON t.id=r.teacher_id"}
+      LEFT JOIN auth_users u ON u.id=r.author_id ${branch.where}
+      ORDER BY r.${deleted ? "deleted_at" : "posted_at_local"} ${dateDirection},r.${branch.id} ${direction} LIMIT ? OFFSET ?`;
+    listValues = branch.values;
+  }
+  const result =
+    paging.total === 0
+      ? { results: [] }
+      : await db
+          .prepare(listSql)
+          .bind(...listValues, MODERATION_PAGE_SIZE, paging.offset)
+          .all<ReviewRow>();
   const reviews: AdminReview[] = result.results.map(({ author_issuer, author_role, ...row }) => {
     const canBan =
       row.author_id !== null &&

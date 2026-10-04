@@ -12,6 +12,7 @@
     "test:http": "node scripts/test-http-permissions.mjs",
     "benchmark:d1": "node scripts/benchmark-d1.mjs",
     "benchmark:pages": "node scripts/benchmark-pages.mjs",
+    "benchmark:moderation": "node scripts/benchmark-moderation.mjs",
     "lint": "oxlint .",
     "format": "oxfmt .",
     "deploy": "pnpm build && wrangler deploy"

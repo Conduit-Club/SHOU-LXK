@@ -1,0 +1,447 @@
+{
+  "measuredAt": "2026-10-04T05:59:19.471Z",
+  "runtime": "local Miniflare/workerd; review count/list only, excludes authentication/audit; source read-only",
+  "counts": {
+    "courses": 1909,
+    "course_section": 3286,
+    "teachers": 970,
+    "course_section_teachers": 4406,
+    "course_reviews": 5597,
+    "teacher_reviews": 0,
+    "category_options": 97
+  },
+  "cases": [
+    {
+      "name": "all",
+      "query": "",
+      "scope": {},
+      "total": 5597,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 35393,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 20495
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 184,
+          "rowsWritten": 0,
+          "countRowsRead": 1,
+          "listRowsRead": 183
+        }
+      ]
+    },
+    {
+      "name": "deep-page",
+      "query": "?page=100",
+      "scope": {},
+      "total": 5597,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 35393,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 20495
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 6124,
+          "rowsWritten": 0,
+          "countRowsRead": 1,
+          "listRowsRead": 6123
+        }
+      ]
+    },
+    {
+      "name": "oldest",
+      "query": "?sort=oldest",
+      "scope": {},
+      "total": 5597,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 35393,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 20495
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 184,
+          "rowsWritten": 0,
+          "countRowsRead": 1,
+          "listRowsRead": 183
+        }
+      ]
+    },
+    {
+      "name": "courses",
+      "query": "?type=course",
+      "scope": {},
+      "total": 5597,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 33453,
+          "rowsWritten": 0,
+          "countRowsRead": 13928,
+          "listRowsRead": 19525
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 5737,
+          "rowsWritten": 0,
+          "countRowsRead": 5597,
+          "listRowsRead": 140
+        }
+      ]
+    },
+    {
+      "name": "teachers",
+      "query": "?type=teacher",
+      "scope": {},
+      "total": 0,
+      "returned": 0,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 1941,
+          "rowsWritten": 0,
+          "countRowsRead": 970,
+          "listRowsRead": 971
+        },
+        {
+          "phase": "after",
+          "queries": 1,
+          "rowsRead": 0,
+          "rowsWritten": 0,
+          "countRowsRead": 0,
+          "listRowsRead": 0
+        }
+      ]
+    },
+    {
+      "name": "text-search",
+      "query": "?q=老师",
+      "scope": {},
+      "total": 2430,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 32226,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 17328
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 5802,
+          "rowsWritten": 0,
+          "countRowsRead": 5598,
+          "listRowsRead": 204
+        }
+      ]
+    },
+    {
+      "name": "empty-search",
+      "query": "?q=__no_such_review__",
+      "scope": {},
+      "total": 0,
+      "returned": 0,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 29797,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 14899
+        },
+        {
+          "phase": "after",
+          "queries": 1,
+          "rowsRead": 5598,
+          "rowsWritten": 0,
+          "countRowsRead": 5598,
+          "listRowsRead": 0
+        }
+      ]
+    },
+    {
+      "name": "target-search",
+      "query": "?target=人工智能",
+      "scope": {},
+      "total": 202,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 29998,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 15100
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 6845,
+          "rowsWritten": 0,
+          "countRowsRead": 3240,
+          "listRowsRead": 3605
+        }
+      ]
+    },
+    {
+      "name": "legacy",
+      "query": "?ownership=legacy",
+      "scope": {},
+      "total": 5597,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 39179,
+          "rowsWritten": 0,
+          "countRowsRead": 16791,
+          "listRowsRead": 22388
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 16954,
+          "rowsWritten": 0,
+          "countRowsRead": 5597,
+          "listRowsRead": 11357
+        }
+      ]
+    },
+    {
+      "name": "known",
+      "query": "?ownership=known",
+      "scope": {},
+      "total": 0,
+      "returned": 0,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 29797,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 14899
+        },
+        {
+          "phase": "after",
+          "queries": 1,
+          "rowsRead": 2,
+          "rowsWritten": 0,
+          "countRowsRead": 2,
+          "listRowsRead": 0
+        }
+      ]
+    },
+    {
+      "name": "author",
+      "query": "?author=%232",
+      "scope": {},
+      "total": 0,
+      "returned": 0,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 29797,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 14899
+        },
+        {
+          "phase": "after",
+          "queries": 1,
+          "rowsRead": 4,
+          "rowsWritten": 0,
+          "countRowsRead": 4,
+          "listRowsRead": 0
+        }
+      ]
+    },
+    {
+      "name": "banned",
+      "query": "?banned=yes",
+      "scope": {},
+      "total": 0,
+      "returned": 0,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 1,
+          "rowsWritten": 0,
+          "countRowsRead": 0,
+          "listRowsRead": 1
+        },
+        {
+          "phase": "after",
+          "queries": 1,
+          "rowsRead": 4,
+          "rowsWritten": 0,
+          "countRowsRead": 4,
+          "listRowsRead": 0
+        }
+      ]
+    },
+    {
+      "name": "not-banned",
+      "query": "?banned=no",
+      "scope": {},
+      "total": 5597,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 35393,
+          "rowsWritten": 0,
+          "countRowsRead": 14898,
+          "listRowsRead": 20495
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 5781,
+          "rowsWritten": 0,
+          "countRowsRead": 5598,
+          "listRowsRead": 183
+        }
+      ]
+    },
+    {
+      "name": "deleted",
+      "query": "?status=deleted",
+      "scope": {},
+      "total": 0,
+      "returned": 0,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 1,
+          "rowsWritten": 0,
+          "countRowsRead": 0,
+          "listRowsRead": 1
+        },
+        {
+          "phase": "after",
+          "queries": 1,
+          "rowsRead": 0,
+          "rowsWritten": 0,
+          "countRowsRead": 0,
+          "listRowsRead": 0
+        }
+      ]
+    },
+    {
+      "name": "deleted-courses",
+      "query": "?status=deleted&type=course",
+      "scope": {},
+      "total": 0,
+      "returned": 0,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 1,
+          "rowsWritten": 0,
+          "countRowsRead": 0,
+          "listRowsRead": 1
+        },
+        {
+          "phase": "after",
+          "queries": 1,
+          "rowsRead": 0,
+          "rowsWritten": 0,
+          "countRowsRead": 0,
+          "listRowsRead": 0
+        }
+      ]
+    },
+    {
+      "name": "course-detail",
+      "query": "",
+      "scope": {
+        "kind": "course",
+        "courseId": "7109911"
+      },
+      "total": 142,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 462,
+          "rowsWritten": 0,
+          "countRowsRead": 160,
+          "listRowsRead": 302
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 311,
+          "rowsWritten": 0,
+          "countRowsRead": 9,
+          "listRowsRead": 302
+        }
+      ]
+    },
+    {
+      "name": "section-detail",
+      "query": "",
+      "scope": {
+        "kind": "course",
+        "courseId": "7109911",
+        "lid": "850"
+      },
+      "total": 88,
+      "returned": 20,
+      "runs": [
+        {
+          "phase": "before",
+          "queries": 2,
+          "rowsRead": 272,
+          "rowsWritten": 0,
+          "countRowsRead": 92,
+          "listRowsRead": 180
+        },
+        {
+          "phase": "after",
+          "queries": 2,
+          "rowsRead": 181,
+          "rowsWritten": 0,
+          "countRowsRead": 1,
+          "listRowsRead": 180
+        }
+      ]
+    }
+  ]
+}

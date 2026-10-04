@@ -129,12 +129,13 @@ export class MemoryCache {
 }
 
 export function measureDatabase(db) {
-  const metrics = { rowsRead: 0, queries: 0 };
+  const metrics = { rowsRead: 0, rowsWritten: 0, queries: 0 };
   const statements = [];
   const record = (result, sql) => {
     metrics.queries++;
     metrics.rowsRead += result.meta.rows_read;
-    statements.push({ sql, rowsRead: result.meta.rows_read });
+    metrics.rowsWritten += result.meta.rows_written;
+    statements.push({ sql, rowsRead: result.meta.rows_read, rowsWritten: result.meta.rows_written });
     return result;
   };
   const wrap = (statement, sql) => ({

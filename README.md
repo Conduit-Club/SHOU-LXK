@@ -89,6 +89,8 @@
 
 完整前后 SQL、执行计划、搜索成本和一致性取舍见 [D1_READ_BUDGET.md](docs/D1_READ_BUDGET.md) 与 [整页测量记录](docs/read-budget-pages.json)。这不是生产账单保证。
 
+管理模式另有本地测量：点评 COUNT 与第一页列表从 35,393 行降至 184 行，其中无筛选精确 COUNT 使用原有事务计数，只读 1 行。认证和审计分页另计；子串搜索、历史归属筛选与深分页仍有成本。此优化不新增索引或迁移，详见 [管理读取预算](docs/D1_READ_BUDGET.md#管理模式读取优化2026-10-04)。
+
 ## 本地运行
 
 ```powershell
@@ -124,6 +126,7 @@ pixi run test
 pixi run build
 pixi run pnpm benchmark:d1 --database <本地SQLite文件路径>
 pixi run pnpm benchmark:pages --database <本地SQLite文件路径>
+pixi run pnpm benchmark:moderation --database <本地SQLite文件路径>
 ```
 
 可用 `rg --files --hidden --no-ignore .wrangler/state -g '*.sqlite'` 查找本地数据库。基准脚本以只读事务复制本地数据到临时 Miniflare D1，绝不连接远程数据库。报告输出到 `.wrangler/read-budget/`。测试覆盖排序、筛选、分页、计数事务、真实 Cache API、Turnstile 拒绝路径、错误脱敏及跑酷规则。
