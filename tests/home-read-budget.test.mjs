@@ -300,6 +300,12 @@ test("concurrent cache fill after invalidation cannot extend staleness beyond it
 test("successful course/teacher actions invalidate public data; invalid Turnstile cannot write or invalidate", async () => {
   await fixture(async (db) => {
     await executeScript(db, await migration());
+    await executeScript(db, await readFile(new URL("../migrations/0006_unified_auth.sql", import.meta.url), "utf8"));
+    await db
+      .prepare(
+        "INSERT INTO auth_users (id, issuer, subject, name, created_at, last_login_at) VALUES (1, 'https://auth.test', 'local-user', 'Local user', 1, 1)",
+      )
+      .run();
     const cache = new MemoryCache();
     const previousCaches = globalThis.caches;
     globalThis.caches = { open: async () => cache };
@@ -324,11 +330,20 @@ test("successful course/teacher actions invalidate public data; invalid Turnstil
           form.set("title", title);
           form.set("content", "local test");
           form.set("cf-turnstile-response", "local-only-token");
+          form.set("csrfToken", "local-test-csrf");
           return {
             platform: { env: { DB: db, TURNSTILE_SECRET_KEY: "unit-test-secret" } },
             params: { courseId: "001", teacherId: "1" },
             url: actionUrl,
-            request: new Request(actionUrl, { method: "POST", body: form }),
+            request: new Request(actionUrl, { method: "POST", body: form, headers: { Origin: actionUrl.origin } }),
+            locals: {
+              getSession: async () => ({
+                userId: 1,
+                csrfToken: "local-test-csrf",
+                name: "Local user",
+                expiresAt: 9999999999,
+              }),
+            },
             fetch: async () => Response.json(verification),
           };
         };
@@ -352,6 +367,18 @@ test("successful course/teacher actions invalidate public data; invalid Turnstil
         assert.equal(cache.entries.size, 1); // Only the unchanged filter options survive.
         const after = await loadHomePublicData(measured.db, url);
         assert.equal(after.stats.reviews, before.reviews + 1);
+        assert.equal(
+          (
+            await db
+              .prepare(
+                `SELECT author_id FROM ${reviewType === "course" ? "course_reviews" : "teacher_reviews"} WHERE title = ?`,
+              )
+              .bind(title)
+              .first()
+          ).author_id,
+          1,
+        );
+        assert.equal(JSON.stringify(after).includes("author_id"), false);
         assert.equal(
           after.latestReviews.some((review) => review.title === title),
           true,

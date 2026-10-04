@@ -66,7 +66,12 @@ export async function copyLocalData(db, filename, progress = () => {}) {
     );
     const counts = {};
     for (const table of tables) {
-      const rows = source.prepare(`SELECT * FROM ${quote(table)}`).all();
+      // Benchmarks copy public pre-0005 fields only, even when the source local
+      // snapshot has later nullable author columns or authentication tables.
+      const columns = (await db.prepare(`PRAGMA table_info(${quote(table)})`).all()).results
+        .map((column) => quote(column.name))
+        .join(",");
+      const rows = source.prepare(`SELECT ${columns} FROM ${quote(table)}`).all();
       counts[table] = rows.length;
       progress(`Copying ${table}: ${rows.length} local rows`);
       if (rows.length) {

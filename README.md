@@ -30,7 +30,8 @@
 - **课程**：搜索名称或课程号，按学院、类型、授课教师、学分、属性和点评数量筛选。详情页先看课程信息和同学点评，点击“写点评”再展开表单；右侧展示教师、其他班级及同学院同学分的相似课程。
 - **老师**：独立搜索姓名，进入教师页查看授课信息与点评。
 - **顶部搜索**：仅搜索课程或课程号；点评与老师使用各自页面的搜索框。
-- **分享体验**：课程和教师页面均可提交点评，写入前由服务端验证 Cloudflare Turnstile。
+- **统一账号**：注册与登录使用 [SHOU-Auth](https://auth.shoumc.com)，账号资料在账号中心管理；本站会话有效 8 小时，可独立退出。
+- **分享体验**：登录后可在课程和教师页面提交点评，写入前由服务端验证会话、CSRF 和 Cloudflare Turnstile。点评公开匿名展示，本站保存账号关联用于内容管理；历史点评保留。
 - **加载失败**：显示统一、无内部细节的提示，并可玩本地校园跑酷——戴眼镜的学生躲避教学楼、收集 GPA POINTS。空格、↑ 或轻点画面跳跃；积分与真实成绩无关。
 
 <details>
@@ -57,12 +58,12 @@
 | 样式与组件   | Tailwind CSS 4、shadcn-svelte、Bits UI、Lucide Svelte                    |
 | 构建与部署   | Vite 8、SvelteKit Cloudflare adapter 8、Wrangler 4、Cloudflare Workers   |
 | 数据与缓存   | Cloudflare D1 / SQLite、SQL 索引与计数触发器、Workers Cache API          |
-| 评论防滥用   | Cloudflare Turnstile，服务端 Siteverify / hostname / action 校验         |
+| 认证与点评   | SHOU-Auth OIDC / openid-client、D1 本站会话、CSRF、Cloudflare Turnstile  |
 | 小游戏       | 原生 Canvas 2D 与 TypeScript，无远程游戏服务或额外图片依赖               |
 | 本地开发     | 原生 Windows / PowerShell 7，Pixi 管理 Node.js 26、pnpm 12               |
 | 检查与测试   | svelte-check、Oxlint、Oxfmt、Node test runner、Miniflare/workerd 本地 D1 |
 
-准确依赖版本见 [package.json](package.json)、[pnpm-lock.yaml](pnpm-lock.yaml) 与 [pixi.lock](pixi.lock)。本项目没有 React、Astro 或 R2 依赖，也没有账号、关注或星级评分功能。
+准确依赖版本见 [package.json](package.json)、[pnpm-lock.yaml](pnpm-lock.yaml) 与 [pixi.lock](pixi.lock)。本项目没有 React、Astro 或 R2 依赖，也没有关注或星级评分功能。账号接入、环境变量与会话边界见 [UNIFIED_AUTH.md](docs/UNIFIED_AUTH.md)。
 
 ## 一次访问会读取多少行
 
@@ -76,6 +77,8 @@
 | 老师列表   |                    2 / 13 |                    2 / 13 |
 
 首页 32 行 = 最新点评 21 + 统计 1 + 课程 5 + 老师 5。原先无筛选 COUNT 的约 6,572 行扫描已替换为事务维护的单行统计读取，首页不再加载课程目录和筛选选项。
+
+这些数字仍适用于游客，没有会话 Cookie 的请求不增加认证查询。已登录访问会额外执行一次通过索引关联的本站会话查询，同一请求只验证一次；个人账号与 CSRF 数据不进入公共缓存。
 
 缓存属于服务器的数据中心，并不属于某个用户：新用户也可能命中已有缓存，老用户也可能遇到过期或不同地区的冷缓存。首页数据缓存 60 秒；课程筛选项缓存 6 小时。评论提交成功后清除当前数据中心的最新评论与展示统计，其他中心最多滞后一个 TTL。目录列表与精确分页总数不缓存。
 
@@ -107,6 +110,8 @@ pixi run dev
 
 本地提交测试可把 `.dev.vars.example` 复制为 `.dev.vars`，使用 Cloudflare 官方测试键；不要在生产使用测试键。生产的 `TURNSTILE_SITE_KEY` 是公开变量，`TURNSTILE_SECRET_KEY` 必须作为 Worker secret 保存。缺少配置或验证服务不可用时，提交验证失败关闭。
 
+统一登录还需独立本地 OIDC client 与 secret，Auth 默认联调端口为 8788、LXK 为 5173。生产 callback 固定为 `https://lxk.shoumc.com/auth/callback`，HTTP 只在显式配置的 loopback 开发环境可用。缺少认证配置时仍可浏览，无法开始新登录；新点评始终要求有效本站会话，详见 [统一认证](docs/UNIFIED_AUTH.md)。
+
 ## 检查与复现
 
 ```powershell
@@ -122,16 +127,16 @@ pixi run pnpm benchmark:pages --database <本地SQLite文件路径>
 
 ## 部署
 
-仓库不使用 Git 自动部署。应用需要先完成 `0005` 迁移；它添加索引与 `site_stats`，与旧应用兼容。备份、迁移成本、部署顺序和回退说明见 [上线步骤](docs/D1_READ_BUDGET.md#上线步骤尚未执行)。远程变更须由维护者明确决定。
+仓库不使用 Git 自动部署。读取优化需要 `0005`；统一账号需要新增 `0006`。两者均与前一版应用兼容。备份、迁移成本和回退说明见 [读取优化上线步骤](docs/D1_READ_BUDGET.md#上线步骤) 与 [统一认证上线顺序](docs/UNIFIED_AUTH.md#上线顺序与回退)。远程变更须由维护者明确决定。
 
 ```powershell
-pixi run pnpm exec wrangler d1 export DB --remote --output .wrangler/shou-courses-before-0005.sql
+pixi run pnpm exec wrangler d1 export DB --remote --output .wrangler/shou-courses-before-next-migration-<unique-time>.sql
 pixi run pnpm exec wrangler d1 migrations apply DB --remote
 pixi run build
 pixi run pnpm exec wrangler deploy --config wrangler.jsonc --keep-vars --strict --var MAINTENANCE_MODE:false
 ```
 
-配置见 `wrangler.jsonc`。保留生产 Turnstile 变量和密钥。若启用 Workers Builds，`.node-version` 指定 Node.js 26，并在构建变量中设置 `PNPM_VERSION=12`。
+配置见 `wrangler.jsonc`。保留生产 Turnstile 变量和密钥，并提前以 Worker Secret 保存 `OIDC_CLIENT_SECRET`。若启用 Workers Builds，`.node-version` 指定 Node.js 26，并在构建变量中设置 `PNPM_VERSION=12`。
 
 ### 临时维护
 

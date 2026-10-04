@@ -1,9 +1,12 @@
 <script lang="ts">
 import "../app.css";
-import { BookOpen, GraduationCap, MessageSquareText, Search, House, Users } from "@lucide/svelte";
+import { BookOpen, GraduationCap, MessageSquareText, Search, House, Users, LogOut, UserRound } from "@lucide/svelte";
 import { page } from "$app/state";
 import type { Snippet } from "svelte";
-let { children }: { children: Snippet } = $props();
+import type { LayoutData } from "./$types";
+let { children, data }: { children: Snippet; data: LayoutData } = $props();
+const returnTo = $derived(`${page.url.pathname}${page.url.search}`);
+const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSearchParams({ returnTo })}`;
 </script>
 
 <a
@@ -61,6 +64,32 @@ let { children }: { children: Snippet } = $props();
         aria-label="搜索"><Search class="size-4" aria-hidden="true" /></button
       >
     </form>
+    <div class="order-4 flex shrink-0 items-center gap-3 text-sm sm:ml-1">
+      {#if data.auth}
+        <a
+          href="https://auth.shoumc.com/account"
+          class="flex max-w-28 items-center gap-1.5 text-muted-foreground hover:text-primary"
+          aria-label="打开统一账号中心"
+        >
+          <UserRound class="size-4 shrink-0" aria-hidden="true" /><span class="truncate">{data.auth.name}</span>
+        </a>
+        <form method="POST" action="/auth/logout">
+          <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />
+          <input type="hidden" name="returnTo" value={returnTo} />
+          <button
+            type="submit"
+            class="flex items-center gap-1.5 text-muted-foreground hover:text-primary"
+            aria-label="退出本站登录"
+            ><LogOut class="size-4" aria-hidden="true" /><span class="hidden sm:inline">退出</span></button
+          >
+        </form>
+      {:else if data.authEnabled}
+        <a href={authLink("login")} data-sveltekit-reload class="font-medium text-primary">登录</a>
+        <a href={authLink("register")} data-sveltekit-reload class="text-muted-foreground hover:text-primary">注册</a>
+      {:else}
+        <span class="text-xs text-muted-foreground">登录暂不可用</span>
+      {/if}
+    </div>
   </nav>
 </header>
 {@render children()}

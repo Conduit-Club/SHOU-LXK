@@ -3,6 +3,7 @@ import { withTeachers } from "#lib/server/teachers.js";
 import { error, fail, redirect } from "@sveltejs/kit";
 import { verifyTurnstile } from "#lib/server/turnstile.js";
 import { invalidateHomeReviews } from "#lib/server/home-cache.js";
+import { reviewSession } from "#lib/server/auth.js";
 import type { Actions, PageServerLoad } from "./$types";
 
 const PAGE_SIZE = 20;
@@ -116,10 +117,12 @@ export const load: PageServerLoad = async ({ params, platform, url }) => {
 };
 
 export const actions: Actions = {
-  submitReview: async ({ params, platform, request, url, fetch }) => {
+  submitReview: async (event) => {
+    const { params, platform, request, url, fetch } = event;
     const db = getBindings(platform).DB;
     if (!db) error(503, "加载失败，请稍后重试。");
     const form = await request.formData();
+    const session = await reviewSession(event, form);
     const lid = form.get("lid");
     const submittedTitle = form.get("title");
     const submittedContent = form.get("content");
@@ -148,10 +151,10 @@ export const actions: Actions = {
     const postedAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
     const result = await db
       .prepare(`
-        INSERT INTO course_reviews (lid, title, content, posted_at_local)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO course_reviews (lid, title, content, posted_at_local, author_id)
+        VALUES (?, ?, ?, ?, ?)
       `)
-      .bind(lid, title, content, postedAt)
+      .bind(lid, title, content, postedAt, session.userId)
       .run();
     await invalidateHomeReviews(url);
     console.info(

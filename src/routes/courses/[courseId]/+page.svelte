@@ -2,12 +2,14 @@
 import TeacherLinks from "#lib/components/teacher-links.svelte";
 import BackToList from "#lib/components/back-to-list.svelte";
 import { goto } from "$app/navigation";
+import { page } from "$app/state";
 import * as Select from "#lib/components/ui/select/index.js";
 import { MessageSquareText } from "@lucide/svelte";
 import { Button } from "#lib/components/ui/button/index.js";
 import { Separator } from "#lib/components/ui/separator/index.js";
 import PagePagination from "#lib/components/page-pagination.svelte";
 import ReviewSendingCard from "#lib/components/review-sending-card.svelte";
+import ReviewLoginCard from "#lib/components/review-login-card.svelte";
 import type { ActionData, PageData } from "./$types";
 
 let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -156,13 +158,16 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
       {/if}
       {#if data.sections.length}
         <section id="review-composer" aria-label="发表点评" class="mt-8 scroll-mt-24">
-          {#if data.writing || form}
+          {#if !data.auth}
+            <ReviewLoginCard returnTo={`${page.url.pathname}${writeUrl}`} enabled={data.authEnabled} />
+          {:else if data.writing || form}
             <ReviewSendingCard
               heading="分享你的课堂体验"
               turnstileSiteKey={data.turnstileSiteKey}
               {form}
               sections={data.sections}
               selectedLid={data.section?.lid}
+              csrfToken={data.auth.csrfToken}
             />
           {:else}
             <div class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card p-5">

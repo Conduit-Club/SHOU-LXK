@@ -25,9 +25,9 @@ test("landing and independent directories preserve search, ordering, pagination 
       WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < 20)
       INSERT INTO teachers SELECT x, '老师' || printf('%02d',x) FROM n;
       WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < 20)
-      INSERT INTO course_reviews SELECT x,'s1','Title ' || x,'实验课 100%_','2026-01-01 00:00:00' FROM n;
+      INSERT INTO course_reviews(id,lid,title,content,posted_at_local) SELECT x,'s1','Title ' || x,'实验课 100%_','2026-01-01 00:00:00' FROM n;
       WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < 20)
-      INSERT INTO teacher_reviews SELECT x,1,'Title ' || x,'Teaching','2026-01-01 00:00:00' FROM n;
+      INSERT INTO teacher_reviews(id,teacher_id,title,content,posted_at_local) SELECT x,1,'Title ' || x,'Teaching','2026-01-01 00:00:00' FROM n;
     `,
     );
     const event = (path, database = db) => ({

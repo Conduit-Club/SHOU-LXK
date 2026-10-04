@@ -35,7 +35,12 @@ test("maintenance blocks loaders, data requests and writes without touching D1",
 test("maintenance only ends when the operator explicitly disables it", async () => {
   for (const value of [undefined, "false"]) {
     const expected = new Response("normal page");
-    const event = { platform: { env: { MAINTENANCE_MODE: value } } };
+    const event = {
+      platform: { env: { MAINTENANCE_MODE: value } },
+      locals: {},
+      url: new URL("https://local.test/"),
+      cookies: { get: () => undefined },
+    };
     assert.equal(
       await handle({
         event,
