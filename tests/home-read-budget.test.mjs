@@ -2,7 +2,15 @@ import "./helpers/server-imports.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
-import { executeScript, localD1, measureDatabase, MemoryCache, migration } from "./helpers/local-d1.mjs";
+import {
+  executeScript,
+  localD1,
+  measureDatabase,
+  MemoryCache,
+  migration,
+  profileMigrations,
+  withoutPublicIdentity,
+} from "./helpers/local-d1.mjs";
 import { legacyCatalog, legacyLatest, legacyStats } from "./helpers/legacy-queries.mjs";
 
 const { LATEST_REVIEWS_SQL, SITE_STATS_SQL, catalogQueries, parseHomeFilters } =
@@ -54,8 +62,9 @@ test("top-five branch limits preserve timestamp/type/id ties and avoid full revi
   await fixture(async (db) => {
     const before = await db.prepare(legacyLatest).all();
     await executeScript(db, await migration());
+    await executeScript(db, await profileMigrations());
     const after = await db.prepare(LATEST_REVIEWS_SQL).all();
-    assert.deepEqual(after.results, before.results);
+    assert.deepEqual(withoutPublicIdentity(after.results), before.results);
     assert.deepEqual(
       after.results.map((row) => [row.review_type, row.id]),
       [
@@ -70,7 +79,7 @@ test("top-five branch limits preserve timestamp/type/id ties and avoid full revi
     // All five may come from just one branch, and either branch may be empty.
     await executeScript(db, "DELETE FROM teacher_reviews");
     assert.deepEqual(
-      (await db.prepare(LATEST_REVIEWS_SQL).all()).results,
+      withoutPublicIdentity((await db.prepare(LATEST_REVIEWS_SQL).all()).results),
       (await db.prepare(legacyLatest).all()).results,
     );
     await executeScript(db, "DELETE FROM course_reviews");
@@ -81,6 +90,7 @@ test("top-five branch limits preserve timestamp/type/id ties and avoid full revi
 test("migration counters track inserts, deletes, moves, updates and rolled-back writes", async () => {
   await fixture(async (db) => {
     await executeScript(db, await migration());
+    await executeScript(db, await profileMigrations());
     const checkCounts = async () => {
       assert.deepEqual(await db.prepare(SITE_STATS_SQL).first(), await db.prepare(legacyStats).first());
       const mismatches = await db
@@ -94,8 +104,8 @@ test("migration counters track inserts, deletes, moves, updates and rolled-back 
       "INSERT INTO courses VALUES ('new', 'New course')",
       "INSERT INTO teachers VALUES (4, 'New teacher')",
       "INSERT INTO course_section(lid, course_id, college, elective_type, credits) VALUES ('new', 'new', 'c', 'e', 0)",
-      "INSERT INTO course_reviews VALUES (1000, 'new', 'new', 'body', '2026-01-03')",
-      "INSERT INTO teacher_reviews VALUES (1000, 4, 'new', 'body', '2026-01-03')",
+      "INSERT INTO course_reviews(id,lid,title,content,posted_at_local) VALUES (1000, 'new', 'new', 'body', '2026-01-03')",
+      "INSERT INTO teacher_reviews(id,teacher_id,title,content,posted_at_local) VALUES (1000, 4, 'new', 'body', '2026-01-03')",
       "UPDATE course_reviews SET lid = '1', title = 'moved' WHERE id = 1000",
       "UPDATE teacher_reviews SET teacher_id = 1, posted_at_local = '2026-01-04' WHERE id = 1000",
       "DELETE FROM course_reviews WHERE id = 1000",
@@ -122,6 +132,7 @@ test("migration counters track inserts, deletes, moves, updates and rolled-back 
 test("filter counts, unique sections, all sort orders and pagination match the old queries", async () => {
   await fixture(async (db) => {
     await executeScript(db, await migration());
+    await executeScript(db, await profileMigrations());
     const scenarios = [
       {},
       { q: "alpha" },
@@ -184,6 +195,7 @@ test("filter counts, unique sections, all sort orders and pagination match the o
 test("catalog pagination clamps invalid/huge pages and does not use stale cached totals", async () => {
   await fixture(async (db) => {
     await executeScript(db, await migration());
+    await executeScript(db, await profileMigrations());
     const cache = new MemoryCache();
     const previousCaches = globalThis.caches;
     globalThis.caches = { open: async () => cache };
@@ -300,7 +312,8 @@ test("concurrent cache fill after invalidation cannot extend staleness beyond it
 test("successful course/teacher actions invalidate public data; invalid Turnstile cannot write or invalidate", async () => {
   await fixture(async (db) => {
     await executeScript(db, await migration());
-    await executeScript(db, await readFile(new URL("../migrations/0006_unified_auth.sql", import.meta.url), "utf8"));
+    await executeScript(db, await profileMigrations());
+
     await db
       .prepare(
         "INSERT INTO auth_users (id, issuer, subject, name, created_at, last_login_at) VALUES (1, 'https://auth.test', 'local-user', 'Local user', 1, 1)",
@@ -340,7 +353,9 @@ test("successful course/teacher actions invalidate public data; invalid Turnstil
               getSession: async () => ({
                 userId: 1,
                 csrfToken: "local-test-csrf",
-                name: "Local user",
+                name: "local_user",
+                username: "local_user",
+                avatarUrl: null,
                 expiresAt: 9999999999,
               }),
             },

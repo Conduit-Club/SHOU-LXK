@@ -38,6 +38,83 @@
   --sidebar-ring: oklch(0.7 0.14 245);
 }
 
+/* Pastel Pixel light palette. The existing dark palette remains the default. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #fdf9f3;
+  --foreground: #5d453e;
+  --card: #f9efe4;
+  --card-foreground: #5d453e;
+  --popover: #fffaf5;
+  --popover-foreground: #5d453e;
+  --primary: #904855;
+  --primary-foreground: #ffffff;
+  --secondary: #f6dbc0;
+  --secondary-foreground: #554430;
+  --muted: #f1e8df;
+  --muted-foreground: #73594e;
+  --accent: #fdebed;
+  --accent-foreground: #74313e;
+  --destructive: #ba1a1a;
+  --border: #d8c1c3;
+  --input: #cdb2b4;
+  --ring: #904855;
+  --chart-1: #904855;
+  --chart-2: #6f5b46;
+  --chart-3: #ad8f83;
+  --chart-4: #d17d8a;
+  --chart-5: #73594e;
+  --radius: 0.8rem;
+  --sidebar: #f9efe4;
+  --sidebar-foreground: #5d453e;
+  --sidebar-primary: #904855;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fdebed;
+  --sidebar-accent-foreground: #74313e;
+  --sidebar-border: #d8c1c3;
+  --sidebar-ring: #904855;
+}
+
+:root[data-theme="light"] .site-header {
+  background: #fdf9f3;
+  box-shadow: none;
+}
+:root[data-theme="light"] .site-brand-mark {
+  background: #e8a7b0;
+  color: #5d453e;
+  box-shadow: none;
+}
+:root[data-theme="light"] .site-nav-link:hover,
+:root[data-theme="light"] .site-nav-link[aria-current="page"] {
+  color: #904855;
+  background: #fdebed;
+}
+:root[data-theme="light"] .top-search,
+:root[data-theme="light"] .directory-search,
+:root[data-theme="light"] input:not([type="radio"]):not([type="hidden"]),
+:root[data-theme="light"] textarea {
+  background: #fdebed;
+}
+:root[data-theme="light"] .review-card,
+:root[data-theme="light"] .overview-card,
+:root[data-theme="light"] .filter-card,
+:root[data-theme="light"] .course-list-card {
+  border-radius: 1rem;
+  box-shadow: none;
+}
+:root[data-theme="light"] [data-slot="button"].bg-primary {
+  background: #e8a7b0;
+  color: #5d453e;
+  border-bottom: 2px solid #d17d8a;
+  box-shadow: none;
+}
+:root[data-theme="light"] [data-slot="button"]:active {
+  transform: translateY(1px);
+}
+:root[data-theme="light"] .review-management {
+  background: #fdebed;
+}
+
 @theme inline {
   --font-sans: ui-sans-serif, system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);

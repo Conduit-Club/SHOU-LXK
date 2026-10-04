@@ -10,7 +10,7 @@ const { Miniflare, convertV4MiniflareOptions } = createRequire(require.resolve("
 test("real workerd Cache API shares public data across requests and invalidates after a write", async () => {
   const root = new URL("../src/lib/server/", import.meta.url);
   const modules = await Promise.all(
-    ["home-cache", "home-queries"].map(async (name) => ({
+    ["home-cache", "home-queries", "public-review"].map(async (name) => ({
       type: "ESModule",
       path: fileURLToPath(new URL(`${name}.js`, root)),
       contents: stripTypeScriptTypes(await readFile(new URL(`${name}.ts`, root), "utf8")),

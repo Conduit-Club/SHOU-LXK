@@ -4,6 +4,11 @@ import { error, fail, redirect } from "@sveltejs/kit";
 import { verifyTurnstile } from "#lib/server/turnstile.js";
 import { invalidateHomeReviews } from "#lib/server/home-cache.js";
 import { reviewSession, writeReview } from "#lib/server/auth.js";
+import { publicReviewProjection, reviewIdentity } from "#lib/server/review-identity.js";
+import type { PublicReviewIdentity } from "#lib/server/review-identity.js";
+import { loadManagedReviews, managementContext } from "#lib/server/moderation.js";
+import type { ReviewManagement } from "#lib/server/moderation.js";
+import { moderationActions } from "#lib/server/moderation-actions.js";
 import type { Actions, PageServerLoad } from "./$types";
 
 const PAGE_SIZE = 20;
@@ -18,15 +23,17 @@ type Section = {
   review_count: number;
 };
 type SimilarCourse = Section & { course_id: string; name: string };
-type Review = {
-  lid: string;
+type Review = PublicReviewIdentity & {
+  lid: string | null;
   id: number;
   title: string;
   content: string;
   posted_at_local: string;
+  moderation?: ReviewManagement;
 };
 
-export const load: PageServerLoad = async ({ params, platform, url }) => {
+export const load: PageServerLoad = async (event) => {
+  const { params, platform, url } = event;
   const db = getBindings(platform).DB;
   if (!db) error(503, "加载失败，请稍后重试。");
 
@@ -49,9 +56,14 @@ export const load: PageServerLoad = async ({ params, platform, url }) => {
   if (lid && !section) error(404, "Course section not found.");
   const sectionFilter = section ? "AND ci.lid = ?" : "";
   const reviewValues = section ? [course.course_id, section.lid] : [course.course_id];
+  const management = await managementContext(event);
+  const managed = management
+    ? await loadManagedReviews(management, url, { kind: "course", courseId: course.course_id, lid: section?.lid })
+    : null;
 
   // These counters are maintained transactionally by the review triggers.
-  const total = section?.review_count ?? sectionChoices.reduce((sum, item) => sum + item.review_count, 0);
+  const total =
+    managed?.total ?? section?.review_count ?? sectionChoices.reduce((sum, item) => sum + item.review_count, 0);
   const recommendationBasis = section ?? sectionChoices[0] ?? null;
   let similarCourses: SimilarCourse[] = [];
   if (recommendationBasis?.college) {
@@ -86,17 +98,19 @@ export const load: PageServerLoad = async ({ params, platform, url }) => {
   const sort = url.searchParams.get("sort") === "oldest" ? "oldest" : "latest";
   const direction = sort === "oldest" ? "ASC" : "DESC";
 
-  const { results: reviews } = await db
-    .prepare(`
-    SELECT r.id, r.lid, r.title, r.content, r.posted_at_local
+  const { results: reviews } = managed
+    ? { results: managed.reviews }
+    : await db
+        .prepare(`
+    SELECT r.id, r.lid, r.title, r.content, r.posted_at_local, ${publicReviewProjection("r.")}
     FROM course_section AS ci
     JOIN course_reviews AS r ON r.lid = ci.lid
     WHERE ci.course_id = ? ${sectionFilter}
     ORDER BY r.posted_at_local ${direction}, r.id ${direction}
     LIMIT ? OFFSET ?
   `)
-    .bind(...reviewValues, PAGE_SIZE, (page - 1) * PAGE_SIZE)
-    .all<Review>();
+        .bind(...reviewValues, PAGE_SIZE, (page - 1) * PAGE_SIZE)
+        .all<Review>();
 
   return {
     course,
@@ -106,6 +120,8 @@ export const load: PageServerLoad = async ({ params, platform, url }) => {
     section,
     sections: sectionChoices,
     reviews,
+    managementMode: !!management,
+    deleted: managed?.deleted ?? false,
     sort,
     total,
     page,
@@ -117,18 +133,20 @@ export const load: PageServerLoad = async ({ params, platform, url }) => {
 };
 
 export const actions: Actions = {
+  ...moderationActions,
   submitReview: async (event) => {
     const { params, platform, request, url, fetch } = event;
     const db = getBindings(platform).DB;
     if (!db) error(503, "加载失败，请稍后重试。");
     const form = await request.formData();
     const session = await reviewSession(event, form);
+    const identity = reviewIdentity(form, session);
     const lid = form.get("lid");
     const submittedTitle = form.get("title");
     const submittedContent = form.get("content");
     const title = typeof submittedTitle === "string" ? submittedTitle.trim() : "";
     const content = typeof submittedContent === "string" ? submittedContent.trim() : "";
-    const values = { title, content, lid: typeof lid === "string" ? lid : "" };
+    const values = { title, content, lid: typeof lid === "string" ? lid : "", visibility: identity.visibility };
 
     const verification = await verifyTurnstile(form, getBindings(platform).TURNSTILE_SECRET_KEY, url.hostname, fetch);
     if (!verification.success) {
@@ -152,10 +170,10 @@ export const actions: Actions = {
     const result = await writeReview(
       db
         .prepare(`
-        INSERT INTO course_reviews (lid, title, content, posted_at_local, author_id)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO course_reviews (lid, title, content, posted_at_local, author_id, is_anonymous, public_username, public_avatar_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `)
-        .bind(lid, title, content, postedAt, session.userId),
+        .bind(lid, title, content, postedAt, session.userId, identity.anonymous, identity.username, identity.avatar),
     );
     await invalidateHomeReviews(url);
     console.info(

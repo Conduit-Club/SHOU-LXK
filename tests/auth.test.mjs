@@ -73,7 +73,13 @@ function provider() {
   let calls = 0;
   let tokenCalls = 0;
   let userInfoSubject = "subject-1";
-  let userInfoData = { name: "Local student", email: "local-student@invalid.test", email_verified: true };
+  let userInfoData = {
+    username: "local_student",
+    name: "local_student",
+    email: "local-student@invalid.test",
+    email_verified: true,
+    roles: ["user"],
+  };
   return {
     get calls() {
       return calls;
@@ -113,6 +119,7 @@ function provider() {
       if (url.href === `${issuer}/oauth2/userinfo`)
         return Response.json({
           sub: userInfoSubject,
+          roles_checked_at: Math.floor(Date.now() / 1000),
           ...userInfoData,
         });
       assert.equal(url.href, `${issuer}/oauth2/token`);
@@ -216,7 +223,7 @@ test("OIDC transaction binds browser, PKCE, state and nonce; sessions persist as
     assert.equal(JSON.stringify(stored).includes("test-access-token"), false);
     const session = await auth.readSession(event(db, jar, "/"));
     assert.equal(session.userId, 1);
-    assert.equal(session.name, "Local student");
+    assert.equal(session.name, "local_student");
     await assert.rejects(auth.completeLogin(event(db, jar, callbackPath), mock.fetch));
     assert.equal(mock.tokenCalls, 1);
     for (const [origin, csrf] of [
@@ -292,7 +299,7 @@ test("userinfo fallback checks the ID Token subject and issuer+sub remains the i
     );
     assert.equal((await db.prepare("SELECT COUNT(*) AS count FROM auth_users").first()).count, 1);
     assert.equal((await db.prepare("SELECT COUNT(*) AS count FROM auth_sessions").first()).count, 1);
-    assert.equal((await auth.readSession(event(db, jar, "/"))).name, "Updated name");
+    assert.equal((await auth.readSession(event(db, jar, "/"))).name, "local_student");
     const mismatch = await auth.beginLogin(event(db, jar), false, mock.fetch);
     mock.userInfoSubject = "other-user";
     await assert.rejects(
@@ -305,50 +312,80 @@ test("userinfo fallback checks the ID Token subject and issuer+sub remains the i
   });
 });
 
-test("administrator binding uses a complete verified email pair and cannot come from query or name claims", async () => {
+test("central UserInfo roles grant short-lived authority and ignore local email/name/query grants", async () => {
   await fixture(async (db) => {
     const mailbox = "admin@invalid.test";
     const jar = cookieJar();
     const mock = provider();
     const env = { LXK_ADMIN_EMAILS: mailbox };
-    const login = async (overrides, userInfo) => {
+    const login = async (overrides = {}, userInfo) => {
       if (userInfo) mock.userInfoData = userInfo;
       const authorization = await auth.beginLogin(
-        event(db, jar, "/auth/login?email=admin%40invalid.test&isAdmin=true", undefined, env),
+        event(db, jar, "/auth/login?isAdmin=true&roles=admin", undefined, env),
         false,
         mock.fetch,
       );
       await auth.completeLogin(event(db, jar, mock.grant(authorization, overrides)), mock.fetch);
       return auth.readSession(event(db, jar, "/", undefined, env));
     };
-    assert.equal((await login({ name: mailbox })).isAdmin, false);
-    // Mixing an unverified ID Token email and UserInfo's unrelated verified
-    // flag would grant admin. Only a complete pair from one source is trusted.
-    assert.equal((await login({ email: mailbox, email_verified: undefined })).isAdmin, false);
-    const trusted = await login({ email: " Admin@Invalid.Test ", email_verified: true });
+    assert.equal((await login({ name: mailbox, email: mailbox, roles: ["admin"] })).isAdmin, false);
+    const freshInfo = {
+      username: "local_student",
+      name: "ignored arbitrary name",
+      email: mailbox,
+      email_verified: true,
+      roles: ["admin"],
+      picture: `https://auth.shoumc.com/api/profile/avatar/${"a".repeat(64)}.png`,
+    };
+    const trusted = await login({}, freshInfo);
     assert.equal(trusted.isAdmin, true);
+    assert.equal(trusted.username, "local_student");
+    assert.equal(trusted.name, "local_student");
+    assert.equal(trusted.avatarUrl, freshInfo.picture);
+    assert.ok(trusted.adminExpiresAt <= Math.floor(Date.now() / 1000) + 300);
     const row = await db.prepare("SELECT * FROM auth_users").first();
     assert.equal(row.verified_email_hash, await auth.tokenHash(mailbox));
     assert.equal(Object.hasOwn(row, "email"), false);
     const privateLayout = await layout(event(db, jar, "/", undefined, env));
     assert.equal(privateLayout.auth.isAdmin, true);
     assert.equal(JSON.stringify(privateLayout).includes(row.verified_email_hash), false);
-    assert.equal((await auth.readSession(event(db, jar, "/", undefined, { LXK_ADMIN_EMAILS: "" }))).isAdmin, false);
+    assert.equal((await auth.readSession(event(db, jar, "/", undefined, { LXK_ADMIN_EMAILS: "" }))).isAdmin, true);
+    await db.prepare("UPDATE auth_users SET role_expires_at=unixepoch() WHERE id=?").bind(trusted.userId).run();
+    const expiredAuthority = await auth.readSession(event(db, jar, "/"));
+    assert.equal(expiredAuthority.isAdmin, false);
+    assert.equal(expiredAuthority.canRenewAdmin, true);
+    assert.equal((await login({}, { ...freshInfo, roles: ["user"] })).isAdmin, false);
+    await assert.rejects(login({}, { ...freshInfo, roles_checked_at: 1 }));
+    await assert.rejects(login({}, { ...freshInfo, username: undefined }));
+    await assert.rejects(login({}, { ...freshInfo, email_verified: undefined }));
+    await assert.rejects(login({}, { ...freshInfo, roles: "admin" }));
     await db
       .prepare("UPDATE auth_users SET banned_at=? WHERE id=?")
       .bind(Math.floor(Date.now() / 1000), trusted.userId)
       .run();
     assert.equal(await auth.readSession(event(db, jar, "/", undefined, env)), null);
-    const authorization = await auth.beginLogin(event(db, jar, "/auth/login", undefined, env), false, mock.fetch);
-    await assert.rejects(
-      auth.completeLogin(event(db, jar, mock.grant(authorization, { email: mailbox })), mock.fetch),
-      (reason) => reason.status === 403,
-    );
+    await assert.rejects(login({}, freshInfo), (reason) => reason.status === 403);
     assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM auth_sessions").first()).n, 0);
-    assert.notEqual((await db.prepare("SELECT banned_at FROM auth_users").first()).banned_at, null);
   });
 });
 
+test("profile username and avatar validation excludes arbitrary names and external avatar URLs", () => {
+  assert.equal(auth.profileUsername("海大同学"), "海大同学");
+  for (const invalid of ["", "x", "Student", "user name", " <script>", "名".repeat(25)])
+    assert.equal(auth.profileUsername(invalid), null);
+  const avatar = `/api/profile/avatar/${"a".repeat(64)}.png`;
+  assert.equal(
+    auth.profileAvatar(`https://auth.shoumc.com${avatar}`, new URL(issuer)),
+    `https://auth.shoumc.com${avatar}`,
+  );
+  for (const value of [
+    `https://evil.test${avatar}`,
+    `javascript:alert(1)`,
+    `https://auth.shoumc.com${avatar}?private=1`,
+    "https://auth.shoumc.com/account",
+  ])
+    assert.equal(auth.profileAvatar(value, new URL(issuer)), null);
+});
 test("public anonymous requests execute no auth SQL and all personalized responses forbid shared caching", async () => {
   const noDb = {
     ...config,
@@ -454,8 +491,9 @@ test("both review actions reject visitors, bad CSRF and bad Origin before Turnst
     ]) {
       for (const [session, origin, csrf, status] of [
         [null, "https://lxk.shoumc.com", "a", 401],
-        [{ userId: 1, csrfToken: "secret" }, "https://evil.test", "secret", 403],
-        [{ userId: 1, csrfToken: "secret" }, "https://lxk.shoumc.com", "wrong", 403],
+        [{ userId: 1, username: "local_student", csrfToken: "secret" }, "https://evil.test", "secret", 403],
+        [{ userId: 1, username: "local_student", csrfToken: "secret" }, "https://lxk.shoumc.com", "wrong", 403],
+        [{ userId: 1, username: null, csrfToken: "secret" }, "https://lxk.shoumc.com", "secret", 401],
       ]) {
         const form = new FormData();
         form.set("csrfToken", csrf);
@@ -475,7 +513,7 @@ test("both review actions reject visitors, bad CSRF and bad Origin before Turnst
   });
 });
 
-test("0006 and 0007 preserve legacy review IDs/content/counters and create the same columns as a fresh schema", async () => {
+test("0006 through 0008 preserve legacy review IDs/content/counters and create the same columns as a fresh schema", async () => {
   const local = await localD1();
   const fresh = await localD1();
   try {
@@ -494,6 +532,10 @@ test("0006 and 0007 preserve legacy review IDs/content/counters and create the s
     await executeScript(
       db,
       await readFile(new URL("../migrations/0007_admin_moderation.sql", import.meta.url), "utf8"),
+    );
+    await executeScript(
+      db,
+      await readFile(new URL("../migrations/0008_profiles_and_review_visibility.sql", import.meta.url), "utf8"),
     );
     assert.deepEqual(await db.prepare("SELECT * FROM site_stats").first(), before);
     assert.equal((await db.prepare("SELECT id, content, author_id FROM course_reviews").first()).author_id, null);

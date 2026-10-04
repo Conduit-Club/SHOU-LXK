@@ -11,6 +11,9 @@ import PagePagination from "#lib/components/page-pagination.svelte";
 import ReviewSendingCard from "#lib/components/review-sending-card.svelte";
 import ReviewLoginCard from "#lib/components/review-login-card.svelte";
 import type { ActionData, PageData } from "./$types";
+import ReviewAuthor from "#lib/components/review-author.svelte";
+import ReviewManagement from "#lib/components/review-management.svelte";
+import ManagementStatus from "#lib/components/management-status.svelte";
 
 let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -36,6 +39,7 @@ const details = $derived([
 
 const pageUrl = (page: number, sort = data.sort) => {
   const params = new URLSearchParams({ page: String(page) });
+  if (data.managementMode && data.deleted) params.set("status", "deleted");
   if (sort === "oldest") params.set("sort", sort);
   if (data.section) params.set("lid", data.section.lid);
   return `?${params}`;
@@ -91,6 +95,12 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
           评价已提交，感谢分享。
         </p>
       {/if}
+      {#if form?.moderation && form.message}<p
+          role="status"
+          class="mb-6 rounded-lg border border-border bg-muted px-4 py-3 text-sm"
+        >
+          {form.message}
+        </p>{/if}
 
       <div class="mb-5 flex flex-wrap items-center justify-between gap-4">
         <h2 class="text-lg font-semibold tracking-tight">同学点评</h2>
@@ -118,10 +128,12 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
         </div>
       </div>
 
+      {#if data.managementMode}<ManagementStatus deleted={data.deleted} />{/if}
       {#if data.reviews.length}
         <ol class="flex flex-col gap-4">
           {#each data.reviews as review (review.id)}
             <li class="rounded-xl border border-border bg-card p-5 text-card-foreground shadow-xs sm:p-6">
+              <div class="mb-4"><ReviewAuthor identity={review} /></div>
               {#if review.title}
                 <h3 class="text-base font-semibold tracking-tight">{review.title}</h3>
               {/if}
@@ -130,6 +142,12 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
               </p>
               <Separator class="my-4" />
               <p class="whitespace-pre-wrap wrap-break-words text-sm leading-7 sm:text-base">{review.content}</p>
+              {#if review.moderation && data.auth?.isAdmin}<ReviewManagement
+                  reviewId={review.id}
+                  kind="course"
+                  management={review.moderation}
+                  csrfToken={data.auth.csrfToken}
+                />{/if}
             </li>
           {/each}
         </ol>
@@ -158,16 +176,21 @@ const writeUrl = $derived(`${pageUrl(data.page)}&write=1#review-composer`);
       {/if}
       {#if data.sections.length}
         <section id="review-composer" aria-label="发表点评" class="mt-8 scroll-mt-24">
-          {#if !data.auth}
-            <ReviewLoginCard returnTo={`${page.url.pathname}${writeUrl}`} enabled={data.authEnabled} />
-          {:else if data.writing || form}
+          {#if !data.auth?.username}
+            <ReviewLoginCard
+              returnTo={`${page.url.pathname}${writeUrl}`}
+              enabled={data.authEnabled}
+              needsProfile={!!data.auth}
+            />
+          {:else if data.writing || (form && !form.moderation)}
             <ReviewSendingCard
               heading="分享你的课堂体验"
               turnstileSiteKey={data.turnstileSiteKey}
-              {form}
+              form={form?.moderation ? null : form}
               sections={data.sections}
               selectedLid={data.section?.lid}
               csrfToken={data.auth.csrfToken}
+              username={data.auth.username}
             />
           {:else}
             <div class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card p-5">

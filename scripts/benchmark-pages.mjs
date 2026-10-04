@@ -9,6 +9,7 @@ import {
   measureDatabase,
   MemoryCache,
   migration,
+  profileMigrations,
 } from "../tests/helpers/local-d1.mjs";
 const { load: home } = await import("../src/routes/+page.server.ts");
 const { load: courses } = await import("../src/routes/courses/+page.server.ts");
@@ -24,6 +25,7 @@ const previousCaches = globalThis.caches;
 try {
   const counts = await copyLocalData(local.db, resolve(source), console.log);
   await executeScript(local.db, await migration());
+  await executeScript(local.db, await profileMigrations());
   const report = [];
   for (const [name, load, path] of [
     ["home", home, "/"],

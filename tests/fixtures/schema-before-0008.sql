@@ -44,14 +44,8 @@ CREATE TABLE auth_users (
     verified_email_hash TEXT CHECK (verified_email_hash IS NULL OR length(verified_email_hash) = 64),
     banned_at INTEGER,
     ban_reason TEXT,
-    username TEXT,
-    avatar_url TEXT,
-    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-    role_expires_at INTEGER NOT NULL DEFAULT 0,
     UNIQUE (issuer, subject)
 ) STRICT;
-
-CREATE UNIQUE INDEX auth_users_username_idx ON auth_users(issuer, username) WHERE username IS NOT NULL;
 
 CREATE TABLE auth_sessions (
     token_hash TEXT PRIMARY KEY CHECK (length(token_hash) = 64),
@@ -90,10 +84,7 @@ CREATE TABLE course_reviews (
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     posted_at_local TEXT NOT NULL,
-    author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
-    is_anonymous INTEGER NOT NULL DEFAULT 1 CHECK (is_anonymous IN (0, 1)),
-    public_username TEXT,
-    public_avatar_url TEXT
+    author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL
 ) STRICT;
 
 CREATE INDEX course_reviews_lid_idx ON course_reviews(lid);
@@ -123,10 +114,7 @@ CREATE TABLE teacher_reviews (
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     posted_at_local TEXT NOT NULL,
-    author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
-    is_anonymous INTEGER NOT NULL DEFAULT 1 CHECK (is_anonymous IN (0, 1)),
-    public_username TEXT,
-    public_avatar_url TEXT
+    author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL
 ) STRICT;
 
 CREATE INDEX teacher_reviews_teacher_posted_idx ON teacher_reviews(teacher_id, posted_at_local, id);
@@ -143,9 +131,6 @@ CREATE TABLE moderation_review_archive (
     content TEXT NOT NULL,
     posted_at_local TEXT NOT NULL,
     author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL,
-    is_anonymous INTEGER NOT NULL DEFAULT 1 CHECK (is_anonymous IN (0, 1)),
-    public_username TEXT,
-    public_avatar_url TEXT,
     deleted_by INTEGER NOT NULL,
     deleted_at INTEGER NOT NULL,
     reason TEXT NOT NULL CHECK (length(trim(reason)) BETWEEN 1 AND 500),
@@ -180,17 +165,13 @@ CREATE TRIGGER course_reviews_ban_guard BEFORE INSERT ON course_reviews
 WHEN (SELECT banned_at FROM auth_users WHERE id = NEW.author_id) IS NOT NULL
 AND NOT EXISTS (SELECT 1 FROM moderation_review_archive a WHERE a.review_type = 'course'
     AND a.review_id = NEW.id AND a.lid = NEW.lid AND a.author_id IS NEW.author_id
-    AND a.title = NEW.title AND a.content = NEW.content AND a.posted_at_local = NEW.posted_at_local
-    AND a.is_anonymous = NEW.is_anonymous AND a.public_username IS NEW.public_username
-    AND a.public_avatar_url IS NEW.public_avatar_url)
+    AND a.title = NEW.title AND a.content = NEW.content AND a.posted_at_local = NEW.posted_at_local)
 BEGIN SELECT RAISE(ABORT, 'LXK_USER_BANNED'); END;
 CREATE TRIGGER teacher_reviews_ban_guard BEFORE INSERT ON teacher_reviews
 WHEN (SELECT banned_at FROM auth_users WHERE id = NEW.author_id) IS NOT NULL
 AND NOT EXISTS (SELECT 1 FROM moderation_review_archive a WHERE a.review_type = 'teacher'
     AND a.review_id = NEW.id AND a.teacher_id = NEW.teacher_id AND a.author_id IS NEW.author_id
-    AND a.title = NEW.title AND a.content = NEW.content AND a.posted_at_local = NEW.posted_at_local
-    AND a.is_anonymous = NEW.is_anonymous AND a.public_username IS NEW.public_username
-    AND a.public_avatar_url IS NEW.public_avatar_url)
+    AND a.title = NEW.title AND a.content = NEW.content AND a.posted_at_local = NEW.posted_at_local)
 BEGIN SELECT RAISE(ABORT, 'LXK_USER_BANNED'); END;
 
 CREATE TABLE category_options (

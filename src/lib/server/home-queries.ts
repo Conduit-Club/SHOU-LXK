@@ -1,3 +1,5 @@
+import { publicReviewProjection } from "./public-review.js";
+import type { PublicReviewIdentity } from "./public-review.js";
 export const PAGE_SIZE = 12;
 
 export type SectionCard = {
@@ -10,7 +12,7 @@ export type SectionCard = {
   review_count: number;
 };
 
-export type LatestReview = {
+export type LatestReview = PublicReviewIdentity & {
   id: number;
   review_type: "course" | "teacher";
   lid: string | null;
@@ -34,24 +36,24 @@ export type FilterOptions = { colleges: string[]; electiveTypes: string[]; attri
 export function reviewFeedSql(predicate = "", branchLimit = "5", finalLimit = "5") {
   return `
   WITH course_latest AS (
-    SELECT id, lid, title, content, posted_at_local
+    SELECT id, lid, title, content, posted_at_local, ${publicReviewProjection()}
     FROM course_reviews ${predicate}
     ORDER BY posted_at_local DESC, id DESC LIMIT ${branchLimit}
   ), teacher_latest AS (
-    SELECT id, teacher_id, title, content, posted_at_local
+    SELECT id, teacher_id, title, content, posted_at_local, ${publicReviewProjection()}
     FROM teacher_reviews ${predicate}
     ORDER BY posted_at_local DESC, id DESC LIMIT ${branchLimit}
   )
-  SELECT id, review_type, lid, course_id, course_name, teacher_id, teacher_name, title, content, posted_at_local
+  SELECT id, review_type, lid, course_id, course_name, teacher_id, teacher_name, title, content, posted_at_local, display_name, avatar_url
   FROM (
     SELECT r.id, 'course' AS review_type, r.lid, c.course_id, c.name AS course_name,
-      NULL AS teacher_id, NULL AS teacher_name, r.title, r.content, r.posted_at_local
+      NULL AS teacher_id, NULL AS teacher_name, r.title, r.content, r.posted_at_local, r.display_name, r.avatar_url
     FROM course_latest AS r
     CROSS JOIN course_section AS cs ON cs.lid = r.lid
     CROSS JOIN courses AS c ON c.course_id = cs.course_id
     UNION ALL
     SELECT r.id, 'teacher' AS review_type, NULL AS lid, NULL AS course_id, NULL AS course_name,
-      t.id AS teacher_id, t.name AS teacher_name, r.title, r.content, r.posted_at_local
+      t.id AS teacher_id, t.name AS teacher_name, r.title, r.content, r.posted_at_local, r.display_name, r.avatar_url
     FROM teacher_latest AS r
     CROSS JOIN teachers AS t ON t.id = r.teacher_id
   )

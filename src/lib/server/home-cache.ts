@@ -3,7 +3,7 @@ import type { FilterOptions, LatestReview, NewCourse, NewTeacher, SiteStats } fr
 
 // Only public, query-independent data: never HTML, filter results, cookies,
 // Turnstile tokens, form values or action responses.
-const CACHE_NAME = "shou-lxk-home-v1";
+const CACHE_NAME = "shou-lxk-home-v2";
 export const HOME_TTL = { options: 6 * 60 * 60, latest: 60, stats: 60, additions: 60 } as const;
 type HomeKey = keyof typeof HOME_TTL;
 type PublicCache = Pick<Cache, "match" | "put" | "delete">;
@@ -20,7 +20,7 @@ async function openCache(): Promise<PublicCache | undefined> {
 function cacheRequest(url: URL, key: HomeKey) {
   // Normalize protocol and discard the entire request path, query and headers.
   // Different public hosts/local test ports keep independent namespaces.
-  return new Request(`https://${url.host}/__home-cache/v1/${key}`);
+  return new Request(`https://${url.host}/__home-cache/v2/${key}`);
 }
 
 export async function readHomeCache<T>(

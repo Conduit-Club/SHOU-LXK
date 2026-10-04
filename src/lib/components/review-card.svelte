@@ -1,7 +1,10 @@
 <script lang="ts">
-import { ArrowUpRight, ChevronDown, MessageSquareText, UserRound } from "@lucide/svelte";
+import { ArrowUpRight, ChevronDown } from "@lucide/svelte";
+import ReviewAuthor from "./review-author.svelte";
+import ReviewManagement from "./review-management.svelte";
+import type { ReviewManagement as Management } from "#lib/server/moderation.js";
 import type { LatestReview } from "#lib/server/home-queries.js";
-let { review }: { review: LatestReview } = $props();
+let { review, csrfToken }: { review: LatestReview & { moderation?: Management }; csrfToken?: string } = $props();
 let expanded = $state(false);
 const bodyId = $derived(`review-${review.review_type}-${review.id}-body`);
 const subject = $derived(review.review_type === "course" ? review.course_name : review.teacher_name);
@@ -14,10 +17,8 @@ const href = $derived(
 
 <article class="review-card">
   <div class="review-meta">
-    <span class="review-avatar" aria-hidden="true">
-      {#if review.review_type === "course"}<MessageSquareText class="size-4" />{:else}<UserRound class="size-4" />{/if}
-    </span>
     <div class="min-w-0 flex-1">
+      <div class="mb-3"><ReviewAuthor identity={review} /></div>
       <p class="text-sm leading-6">
         <span class="review-kind">{review.review_type === "course" ? "课程点评" : "教师点评"}</span><span
           class="mx-2 text-muted-foreground">/</span
@@ -49,4 +50,10 @@ const href = $derived(
       >
     </div>
   </div>
+  {#if review.moderation && csrfToken}<ReviewManagement
+      reviewId={review.id}
+      kind={review.review_type}
+      management={review.moderation}
+      {csrfToken}
+    />{/if}
 </article>

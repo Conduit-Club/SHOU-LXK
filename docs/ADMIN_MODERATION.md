@@ -1,30 +1,36 @@
-# LXK 管理员与本站内容管理
+# LXK 管理模式与内容管理
 
-管理员入口为 `/admin`，登录后顶部会显示“管理”。需要先完成 `0007_admin_moderation.sql`，并以 Worker Secret 配置 `LXK_ADMIN_EMAILS`（逗号、分号或换行分隔的精确邮箱）。这个名单只管 LXK，与 SHOU-Auth 的 `ADMIN_EMAILS` 分开，不默认继承账号中心权限，也不把真实管理员邮箱写入源码或公开变量。
+认证中心的已验证管理员登录后，顶部显示“管理”与“管理模式”开关。`/admin` 提供完整搜索筛选和操作审计；开启管理模式后，点评搜索列表、课程和老师详情也可原位删除、恢复及管理作者。开关保存为本站 HttpOnly Cookie，导航时保留；它仅控制界面，不授予权限。
 
-## 身份与权限
+## 中心身份与短期权限
 
-只有经过 OIDC 授权码、PKCE、state、nonce、签名、issuer、audience 和过期校验的可信资料能绑定管理员身份。邮箱与 `email_verified=true` 必须来自同一份完整的已验证 ID Token 或 subject 匹配的 UserInfo。客户端提交的邮箱、姓名、角色、账号 ID 都不能授予权限。
+需要先完成 `0007_admin_moderation.sql` 与 `0008_profiles_and_review_visibility.sql`。管理员只来自 SHOU-Auth 最新的认证 UserInfo `roles: ["admin"]`；Auth 统一维护管理员资格。旧 `LXK_ADMIN_EMAILS` 已停止使用，保留该 Secret 也不会给用户授权。
 
-本站仍以 `issuer + subject` 定位用户。私有 `auth_users.verified_email_hash` 只保存规范化邮箱的 SHA-256 hash，不保存明文邮箱；邮箱 trim、转小写后精确匹配，不合并 Gmail 点号、别名或 `+` 后缀。每次会话读取都会从 D1 取得当前身份 hash 和封禁状态，并与当前服务端名单及可信 issuer 比对。页面只返回该用户是否能进入管理页，不返回 hash、subject 或名单。普通课程、教师及点评查询和首页公共 Cache 没有作者信息或管理身份数据。
+登录回调完成授权码、PKCE、state、nonce、签名、issuer、audience 与过期校验后，使用 access token 请求最新 UserInfo，并核对稳定 subject。用户名、头像、邮箱验证和角色来自同一完整的可信响应，不拼接客户端资料。本站仍以 `issuer + subject` 定位用户，不用姓名或邮箱作永久身份。
 
-`0007` 不会猜测旧账号邮箱，旧用户的 hash 初始为 NULL。**名单中的管理员必须退出 LXK 后重新登录一次**，通过新的可信回调绑定邮箱，才能看到管理入口。移除名单会让下一次请求失去管理权限，管理写入还会在其数据库事务内再次核对当前会话、身份和有效期。
+普通会话最多有效 8 小时；管理权限只保留到 `min(roles_checked_at + 300, 当前时间 + 300, 已验证 ID Token exp)`。每次管理读取都从 D1 核对角色和有效期，每次写入还会在 batch 事务内复核当前会话、中心角色、issuer、封禁与有效期。权限过期后顶部显示“验证管理权限”，用户须重新登录，让中心重新确认角色。中心撤销资格在最后一次确认后至多约 5 分钟生效，没有无限期缓存管理身份。
 
-## 删除、恢复与封禁
+旧资料的姓名和邮箱 hash 保留在私有存储中，新增角色默认为普通用户，用户名默认为 NULL。旧本站会话可继续浏览、退出，发表点评前须重新登录并补充唯一用户名。页面不返回 email hash、subject 或管理员名单。
 
-- 课程和教师点评分别分页管理，每页最多 20 条，可切换“公开中”和“已删除”。每个操作必须写理由（1–500 字），所有写入均要求 POST、同源 Origin、本站 CSRF token 和服务端管理员权限。
-- 删除是可恢复的：在同一 D1 batch 事务内复制到私有 `moderation_review_archive`、移除活动点评并记审计。恢复将原 ID、正文、作者关联及发表时间放回活动表，再移除档案并记审计；任何失败全部回滚，不覆盖冲突点评。
-- 两类活动点评的主键使用 `AUTOINCREMENT`。删除最高 ID 或归档全部点评以后，新点评也不会占用已删除 ID；恢复旧 ID 后的新 ID 继续递增。迁移会复制当前点评表并重建同名索引和计数触发器，原数据和计数不变。
-- 公共查询仍只读活动表；现有触发器在删除/恢复的同一事务内维护 `site_stats.reviews` 和课程班级 `review_count`，不增加公开页查询或扫描。成功后清除当前数据中心的首页点评/统计缓存，其他地区最多约 60 秒显示旧首页；目录和详情直接读取当前数据。
-- 封禁仅针对 LXK，保留已有点评。封禁状态与审计在同一事务内提交，数据库触发器撤销该用户所有本站会话；再次登录仍被拒绝。新评论和新会话的 INSERT 触发器在写入时核对封禁，防止 Turnstile 或 OIDC 处理期间发生并发封禁后继续写入。
-- 解除封禁不会恢复旧会话，用户必须重新登录。管理员仍可恢复封禁用户的原点评；这一例外只允许与私有档案逐字段相同的原评论，不能当作新点评提交。
-- 不能封禁自己或其他当前管理员，服务端及事务目标条件都复核这项保护。旧 `author_id=NULL` 点评可删、可恢复，但无法追溯到用户，界面明确禁止作者封禁。
+## 搜索与原位操作
 
-管理页面和审计都使用 `private, no-store`。`moderation_events` 保存真实变化的操作 ID、操作者本站 ID、目标、动作、理由和 UTC 时间，并可分页查看；重复删除/恢复/封禁返回 409，不重复计数或产生虚假审计。生产 D1 备份包含私有身份与管理资料，按私有数据保管。
+完整管理面板和开启模式的点评目录可按标题/正文、课程或教师、作者用户名/本站编号、点评类型、公开/已删除、账号关联和作者封禁状态组合筛选。文本使用参数化字面子串搜索；`%`、`_` 不变成 SQL 通配符。列表与审计均分页，每页最多 20 条，分页保留筛选。课程详情只加载所属课程和选中班级的点评，教师详情只加载该教师的点评；普通用户伪造开关或 `status=deleted` 也不能看到私有档案。
 
-## 本地复现
+每条点评提供折叠的管理操作，避免遮挡阅读。历史无账号关联点评可删除、恢复，无法封禁作者。匿名点评的公开称呼固定为“匿名用户”，无头像；管理员仍可读取其私有作者关联进行封禁，不会把这些资料加入公共缓存。
 
-使用隔离持久目录与 development OIDC client，禁止生产测试评论。已有 `0006` 库只应用本地 `0007`；新空库直接加载当前 `schema.sql`。本地 Auth capture 模式仍为 8788，LXK 为 5173，本地 `.dev.vars` 的 `LXK_ADMIN_EMAILS` 只填写测试邮箱。
+- 每个操作必须写理由（1–500 字），要求 POST、同源 Origin、本站 CSRF 和当前服务端管理员权限。
+- 删除在同一 D1 batch 事务内复制到私有 `moderation_review_archive`，移除活动点评并记审计。恢复原 ID、正文、归属、发表时间、匿名选择及公开快照，移除档案并记审计；任何失败全部回滚，不覆盖冲突点评。
+- 活动点评主键使用 AUTOINCREMENT，归档最高编号后新点评也不会占用它。现有计数触发器在删除/恢复事务内维护站点和班级计数。
+- 公共查询只读活动表。成功后清除本数据中心首页点评/统计缓存；其他中心最多约 60 秒显示旧首页，目录与详情直接读取当前数据。管理模式查询独立于公共缓存；游客公开页不新增管理 SQL。
+- 封禁仅针对 LXK，保留已有点评；状态、审计和会话撤销同事务提交。新会话和点评的 INSERT 触发器在写入时复核封禁，阻止 OIDC 或 Turnstile 处理中的并发封禁绕过。
+- 解封不恢复旧会话，用户须重新登录。管理员可恢复被封禁作者逐字段相同的原点评；该例外同时检查匿名选择和公开资料，不允许修改为新的署名点评。
+- 不能修改自己的封禁状态，也不能封禁可信中心管理员；服务端与事务目标条件双重复核。重复删除、恢复、封禁返回 409，不重复计数或产生虚假审计。
+
+所有页面响应均 `private, no-store`。`moderation_events` 保存真实变化的操作 ID、操作者本站编号、目标、动作、理由与 UTC 时间。生产备份包含私有身份、档案和审计，按私有数据保管。
+
+## 本地验证
+
+测试使用隔离 D1、模拟签名 OIDC 与官方 Turnstile 测试键，不写生产测试账号或点评。现有库仅应用缺失迁移；新空库直接加载当前 `schema.sql`。
 
 ```powershell
 pixi run pnpm exec wrangler d1 migrations apply DB --local
@@ -34,22 +40,20 @@ pixi run test
 pixi run build
 ```
 
-HTTP 检查顺序：测试邮箱邀请注册、验证邮箱、真实 OIDC 登录后 `/admin` 返回 200；游客 401、普通用户 403、错误 CSRF 和跨源 403；删除课程/教师点评、重复操作 409、恢复原编号、封禁作者使旧 Cookie 立即失效、被封作者旧点评可恢复、解封不恢复旧会话。检查分页、审计、`Cache-Control: private, no-store`，并从数据库核对计数。
-
-`tests/moderation.test.mjs` 使用真实 Miniflare D1 覆盖权限、CSRF、事务、计数、缓存失效、ID 不重用、并发权限撤销、封禁写入保护和审计失败全回滚。`tests/auth.test.mjs` 验证可信邮箱绑定及两个资料来源不能错误拼接。
+`tests/moderation.test.mjs` 验证权限、CSRF、事务、计数、缓存失效、ID 不重用、并发撤权与审计失败回滚。`tests/review-visibility.test.mjs` 验证匿名公开投影、伪造开关拒绝、真实身份提交、历史存储保留、组合筛选、详情归属、原位恢复和角色到期。Auth 测试验证中心角色、过期时间、UserInfo subject 与旧会话资料要求。
 
 ## 生产顺序
 
-1. 以唯一新文件名导出当前生产 D1 并确认成功；查询迁移状态，只应用缺失的 `0007`，不重放历史点评或历史迁移。迁移会复制点评，因此存在一次性的读取/写入成本。
-2. 将指定管理员邮箱写入 `LXK_ADMIN_EMAILS` Worker Secret；保留 OIDC 和 Turnstile 的生产配置与密钥。
-3. 发布已审核、已测试的构建，仅少量验证公开页、游客管理拒绝与登录跳转。真实管理员重新登录后可自行进入 `/admin`；不代其生产注册或写测试点评。
+1. 唯一文件名备份当前生产 D1 并确认成功，查询迁移状态，只应用缺失迁移。已完成 `0007` 的库只需 additive `0008`；不重放历史点评、不批量改旧名或归属。
+2. 先发布提供 canonical username、picture、roles 与 roles_checked_at 的 Auth，确认 profile 范围正确和用户名唯一不可变。保留 LXK 的 OIDC、Turnstile 变量与密钥，不新增本地管理员名单。
+3. 发布已审核构建，仅少量检查公开页、管理拒绝路径与登录跳转；真实管理员重新验证中心角色。完整写入和封禁流程只在本地隔离数据验证。
 
 ```powershell
 pixi run pnpm exec wrangler d1 migrations list DB --remote
-pixi run pnpm exec wrangler d1 export DB --remote --output .wrangler/shou-courses-before-0007-<unique-time>.sql
+pixi run pnpm exec wrangler d1 export DB --remote --output .wrangler/shou-courses-before-0008-<unique-time>.sql
 pixi run pnpm exec wrangler d1 migrations apply DB --remote
-pixi run pnpm exec wrangler secret put LXK_ADMIN_EMAILS
+pixi run build
 pixi run pnpm exec wrangler deploy --config wrangler.jsonc --keep-vars --strict --var MAINTENANCE_MODE:false
 ```
 
-`0007` 的活动表与旧公开查询兼容。回退应用可以保留新增对象和封禁触发器，但旧应用没有删除/恢复/封禁 UI；不要为回退删掉档案、审计、封禁记录或数据库。LXK 封禁不修改认证中心用户状态，全中心停用仍由账号中心独立管理。
+0008 保留旧字段与数据，但回退旧管理应用会恢复旧版本的本地邮箱授权逻辑，应由维护者明确处理。不要为回退删除档案、审计、角色或封禁记录。LXK 封禁不修改认证中心账号状态。

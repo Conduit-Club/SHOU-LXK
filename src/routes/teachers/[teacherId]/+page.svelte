@@ -11,11 +11,15 @@ import ReviewSendingCard from "#lib/components/review-sending-card.svelte";
 import ReviewLoginCard from "#lib/components/review-login-card.svelte";
 import { page } from "$app/state";
 import type { ActionData, PageData } from "./$types";
+import ReviewAuthor from "#lib/components/review-author.svelte";
+import ReviewManagement from "#lib/components/review-management.svelte";
+import ManagementStatus from "#lib/components/management-status.svelte";
 
 let { data, form }: { data: PageData; form: ActionData } = $props();
 
 const pageUrl = (page: number, sort = data.sort) => {
   const params = new URLSearchParams({ page: String(page) });
+  if (data.managementMode && data.deleted) params.set("status", "deleted");
   if (sort === "oldest") params.set("sort", sort);
   return `?${params}`;
 };
@@ -37,6 +41,12 @@ const pageUrl = (page: number, sort = data.sort) => {
   {#if data.submitted}
     <p class="mb-6 rounded-lg border border-border bg-muted px-4 py-3 text-sm" role="status">评价已提交，感谢分享。</p>
   {/if}
+  {#if form?.moderation && form.message}<p
+      role="status"
+      class="mb-6 rounded-lg border border-border bg-muted px-4 py-3 text-sm"
+    >
+      {form.message}
+    </p>{/if}
 
   <section class="mb-10" aria-labelledby="teacher-courses">
     <h2 id="teacher-courses" class="mb-4 text-lg font-semibold">授课课程</h2>
@@ -58,16 +68,21 @@ const pageUrl = (page: number, sort = data.sort) => {
     </ul>
   </section>
 
-  {#if data.auth}
+  {#if data.auth?.username}
     <ReviewSendingCard
       id="review-composer"
       heading="评价教师"
       turnstileSiteKey={data.turnstileSiteKey}
       csrfToken={data.auth.csrfToken}
-      {form}
+      username={data.auth.username}
+      form={form?.moderation ? null : form}
     />
   {:else}
-    <ReviewLoginCard returnTo={`${page.url.pathname}${page.url.search}#review-composer`} enabled={data.authEnabled} />
+    <ReviewLoginCard
+      returnTo={`${page.url.pathname}${page.url.search}#review-composer`}
+      enabled={data.authEnabled}
+      needsProfile={!!data.auth}
+    />
   {/if}
 
   <div class="mb-5 flex flex-wrap items-center justify-between gap-4">
@@ -96,10 +111,12 @@ const pageUrl = (page: number, sort = data.sort) => {
     </div>
   </div>
 
+  {#if data.managementMode}<ManagementStatus deleted={data.deleted} />{/if}
   {#if data.reviews.length}
     <ol class="flex flex-col gap-4">
       {#each data.reviews as review (review.id)}
         <li class="rounded-xl border border-border bg-card p-5 text-card-foreground shadow-xs sm:p-6">
+          <div class="mb-4"><ReviewAuthor identity={review} /></div>
           {#if review.title}
             <h3 class="text-base font-semibold tracking-tight">{review.title}</h3>
           {/if}
@@ -108,6 +125,12 @@ const pageUrl = (page: number, sort = data.sort) => {
           </p>
           <Separator class="my-4" />
           <p class="whitespace-pre-wrap wrap-break-words text-sm leading-7 sm:text-base">{review.content}</p>
+          {#if review.moderation && data.auth?.isAdmin}<ReviewManagement
+              reviewId={review.id}
+              kind="teacher"
+              management={review.moderation}
+              csrfToken={data.auth.csrfToken}
+            />{/if}
         </li>
       {/each}
     </ol>

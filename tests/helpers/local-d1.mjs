@@ -23,6 +23,18 @@ export async function localD1() {
 }
 
 export const migration = () => readFile(new URL("../../migrations/0005_home_read_budget.sql", import.meta.url), "utf8");
+export async function profileMigrations() {
+  return (
+    await Promise.all(
+      ["0006_unified_auth.sql", "0007_admin_moderation.sql", "0008_profiles_and_review_visibility.sql"].map((name) =>
+        readFile(new URL(`../../migrations/${name}`, import.meta.url), "utf8"),
+      ),
+    )
+  ).join("\n");
+}
+export function withoutPublicIdentity(rows) {
+  return rows.map(({ display_name: _name, avatar_url: _avatar, ...row }) => row);
+}
 
 export async function executeScript(db, sql) {
   // D1.exec splits on newlines; prepare/run supports a multiline SQL script,

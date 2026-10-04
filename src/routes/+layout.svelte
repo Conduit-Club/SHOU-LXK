@@ -1,9 +1,11 @@
 <script lang="ts">
 import "../app.css";
-import { BookOpen, GraduationCap, MessageSquareText, Search, House, Users, LogOut, UserRound } from "@lucide/svelte";
+import { BookOpen, GraduationCap, MessageSquareText, Search, House, Users, LogOut } from "@lucide/svelte";
 import { page } from "$app/state";
 import type { Snippet } from "svelte";
 import type { LayoutData } from "./$types";
+import ThemeToggle from "#lib/components/theme-toggle.svelte";
+import ReviewAuthor from "#lib/components/review-author.svelte";
 let { children, data }: { children: Snippet; data: LayoutData } = $props();
 const returnTo = $derived(`${page.url.pathname}${page.url.search}`);
 const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSearchParams({ returnTo })}`;
@@ -16,7 +18,7 @@ const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSea
 >
 <header class="site-header sticky top-0 z-40 border-b">
   <nav
-    class="mx-auto flex min-h-16 max-w-6xl flex-wrap items-center gap-3 px-4 py-2 sm:flex-nowrap sm:gap-5 sm:px-6"
+    class="mx-auto flex min-h-16 max-w-6xl flex-wrap items-center gap-3 px-4 py-2 xl:flex-nowrap sm:gap-5 sm:px-6"
     aria-label="主导航"
   >
     <a href="/" class="flex shrink-0 items-center gap-3 no-underline">
@@ -64,15 +66,32 @@ const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSea
         aria-label="搜索"><Search class="size-4" aria-hidden="true" /></button
       >
     </form>
-    <div class="order-4 flex shrink-0 items-center gap-3 text-sm sm:ml-1">
+    <div class="order-4 flex w-full shrink-0 flex-wrap items-center justify-end gap-3 text-sm xl:w-auto xl:ml-1">
+      <ThemeToggle />
       {#if data.auth}
-        {#if data.auth.isAdmin}<a href="/admin" class="font-medium text-primary">管理</a>{/if}
+        {#if data.auth.isAdmin}
+          <a href="/admin" class="font-medium text-primary">管理</a>
+          <form method="POST" action="/admin/mode">
+            <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />
+            <input type="hidden" name="returnTo" value={returnTo} />
+            <input type="hidden" name="enabled" value={data.managementMode ? "0" : "1"} />
+            <button
+              type="submit"
+              aria-pressed={data.managementMode}
+              class="rounded-md border border-border px-2 py-1.5 text-xs text-primary"
+            >
+              管理模式{data.managementMode ? "：开" : "：关"}
+            </button>
+          </form>
+        {:else if data.auth.canRenewAdmin}
+          <a href={authLink("login")} data-sveltekit-reload class="text-xs text-primary">验证管理权限</a>
+        {/if}
         <a
           href="https://auth.shoumc.com/account"
           class="flex max-w-28 items-center gap-1.5 text-muted-foreground hover:text-primary"
           aria-label="打开统一账号中心"
         >
-          <UserRound class="size-4 shrink-0" aria-hidden="true" /><span class="truncate">{data.auth.name}</span>
+          <ReviewAuthor identity={{ display_name: data.auth.name, avatar_url: data.auth.avatarUrl }} />
         </a>
         <form method="POST" action="/auth/logout">
           <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />

@@ -44,9 +44,20 @@ async function fixture(run) {
     ]) {
       await db
         .prepare(
-          "INSERT INTO auth_users(id,issuer,subject,name,created_at,last_login_at,verified_email_hash) VALUES (?,?,?,?,?,?,?)",
+          "INSERT INTO auth_users(id,issuer,subject,name,created_at,last_login_at,verified_email_hash,username,role,role_expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
         )
-        .bind(id, issuer, `subject-${id}`, `Local user ${id}`, now, now, await auth.tokenHash(email))
+        .bind(
+          id,
+          issuer,
+          `subject-${id}`,
+          `Local user ${id}`,
+          now,
+          now,
+          await auth.tokenHash(email),
+          `local_user_${id}`,
+          id === 2 ? "user" : "admin",
+          now + 300,
+        )
         .run();
       await db
         .prepare("INSERT INTO auth_sessions(token_hash,user_id,csrf_token,created_at,expires_at) VALUES (?,?,?,?,?)")
@@ -87,7 +98,7 @@ async function checkCounts(db, total) {
   assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
 }
 
-test("only verified issuer-bound server allowlist administrators may read or mutate moderation", async () => {
+test("only fresh centrally verified issuer-bound administrators may read or mutate moderation", async () => {
   await fixture(async (db) => {
     for (const [id, status] of [
       [null, 401],
@@ -118,9 +129,9 @@ test("only verified issuer-bound server allowlist administrators may read or mut
     const wrongIssuer = event(db, 1);
     wrongIssuer.platform.env.OIDC_ISSUER = "https://other.invalid/api/auth";
     await assert.rejects(adminLoad(wrongIssuer), (reason) => reason.status === 403);
-    await assert.rejects(adminLoad(event(db, 1, "/admin", undefined, "")), (reason) => reason.status === 403);
+    assert.equal((await adminLoad(event(db, 1, "/admin", undefined, ""))).reviews.length, 4);
     const admin = await adminLoad(event(db, 1));
-    assert.equal(admin.reviews.length, 2);
+    assert.equal(admin.reviews.length, 4);
     assert.equal(admin.reviews.find((r) => r.id === 10).canBan, false);
     assert.equal(JSON.stringify(admin).includes("email_hash"), false);
     assert.equal(JSON.stringify(admin).includes(adminEmail), false);
@@ -279,10 +290,7 @@ test("stale administrator permission and protected-author changes cannot mutate 
   });
   await fixture(async (db) => {
     const context = await moderation.requireAdmin(event(db, 1));
-    await db
-      .prepare("UPDATE auth_users SET verified_email_hash=? WHERE id=1")
-      .bind(await auth.tokenHash("removed-admin@invalid.test"))
-      .run();
+    await db.prepare("UPDATE auth_users SET role='user' WHERE id=1").run();
     assert.equal(
       await moderation.archiveReview(
         context,
@@ -341,7 +349,7 @@ test("admin review/audit pagination is bounded and visitor landing budget remain
     const last = await adminLoad(event(db, 1, "/admin?page=999"));
     assert.equal(first.reviews.length, 20);
     assert.equal(last.page, 2);
-    assert.equal(last.reviews.length, 8);
+    assert.equal(last.reviews.length, 10);
     const measured = measureDatabase(db);
     const publicData = await loadLandingData(measured.db, new URL("https://lxk.shoumc.com"), Promise.resolve(null));
     assert.equal(measured.metrics.queries, 4);
@@ -374,12 +382,16 @@ test("0007 preserves current rows/counters and AUTOINCREMENT survives all-high-I
     assert.deepEqual(await db.prepare("SELECT * FROM site_stats").first(), before);
     assert.deepEqual((await db.prepare("SELECT * FROM course_reviews").all()).results, course.results);
     assert.deepEqual((await db.prepare("SELECT * FROM teacher_reviews").all()).results, teacher.results);
+    await executeScript(
+      db,
+      await readFile(new URL("../migrations/0008_profiles_and_review_visibility.sql", import.meta.url), "utf8"),
+    );
     const now = Math.floor(Date.now() / 1000);
     await db
       .prepare(
-        "INSERT INTO auth_users(id,issuer,subject,name,created_at,last_login_at,verified_email_hash) VALUES (1,?,'admin','Admin',?,?,?)",
+        "INSERT INTO auth_users(id,issuer,subject,name,created_at,last_login_at,verified_email_hash,username,role,role_expires_at) VALUES (1,?,'admin','Admin',?,?,?,'local_admin','admin',?)",
       )
-      .bind(issuer, now, now, await auth.tokenHash(adminEmail))
+      .bind(issuer, now, now, await auth.tokenHash(adminEmail), now + 300)
       .run();
     await db
       .prepare(

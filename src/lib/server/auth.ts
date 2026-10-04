@@ -12,9 +12,13 @@ const seconds = () => Math.floor(Date.now() / 1000);
 export type AuthSession = {
   userId: number;
   name: string;
+  username: string | null;
+  avatarUrl: string | null;
   csrfToken: string;
   expiresAt: number;
   isAdmin: boolean;
+  adminExpiresAt: number;
+  canRenewAdmin: boolean;
   sessionHash: string;
 };
 type AuthEvent = Pick<RequestEvent, "platform" | "url" | "cookies" | "locals" | "request">;
@@ -122,16 +126,25 @@ export function normalizedEmail(value: unknown): string | null {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254 ? email : null;
 }
 
-export async function adminEmailHashes(env: Bindings): Promise<string[]> {
-  const emails = (env.LXK_ADMIN_EMAILS ?? "")
-    .split(/[,;\n]/)
-    .map(normalizedEmail)
-    .filter((email): email is string => !!email);
-  return Promise.all([...new Set(emails)].map(tokenHash));
-}
-
 export function trustedIssuer(env: Bindings): string {
   return env.OIDC_ISSUER ?? "https://auth.shoumc.com/api/auth";
+}
+
+export function profileUsername(value: unknown): string | null {
+  if (typeof value !== "string" || value !== value.normalize("NFKC").trim().toLowerCase()) return null;
+  return /^[a-z0-9\u3400-\u9fff][a-z0-9_\-\u3400-\u9fff]{1,23}$/.test(value) ? value : null;
+}
+
+export function profileAvatar(value: unknown, issuer: URL): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const avatar = new URL(value);
+    if (avatar.origin !== issuer.origin || avatar.search || avatar.hash || avatar.username || avatar.password)
+      return null;
+    return /^\/api\/profile\/avatar\/[a-f0-9]{64}\.png$/.test(avatar.pathname) ? avatar.href : null;
+  } catch {
+    return null;
+  }
 }
 
 export function localBanError(reason: unknown): boolean {
@@ -176,26 +189,27 @@ export async function readSession(event: Pick<AuthEvent, "platform" | "url" | "c
   if (event.url.protocol !== "https:" && !(env.OIDC_ALLOW_LOCAL_HTTP === "true" && loopback(event.url.hostname)))
     return null;
   if (!env.DB) return null;
-  const record =
-    await env.DB.prepare(`SELECT u.id AS userId, u.name, s.csrf_token AS csrfToken, s.expires_at AS expiresAt,
-        s.token_hash AS sessionHash, u.issuer, u.verified_email_hash AS emailHash
+  const record = await env.DB.prepare(`SELECT u.id AS userId, u.username, u.avatar_url AS avatarUrl,
+        s.csrf_token AS csrfToken, s.expires_at AS expiresAt, s.token_hash AS sessionHash,
+        u.issuer, u.role, u.role_expires_at AS adminExpiresAt
       FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ? AND u.banned_at IS NULL`)
-      .bind(await tokenHash(token), seconds())
-      .first<Omit<AuthSession, "isAdmin"> & { issuer: string; emailHash: string | null }>();
+    .bind(await tokenHash(token), seconds())
+    .first<Omit<AuthSession, "isAdmin" | "name" | "canRenewAdmin"> & { issuer: string; role: string }>();
   if (!record) clearCookie(event.cookies, event.url, "session");
   if (!record) return null;
-  const isAdmin =
-    record.issuer === trustedIssuer(env) &&
-    !!record.emailHash &&
-    (await adminEmailHashes(env)).includes(record.emailHash);
+  const isAdmin = record.issuer === trustedIssuer(env) && record.role === "admin" && record.adminExpiresAt > seconds();
   return {
     userId: record.userId,
-    name: record.name,
+    name: record.username ?? "未设置用户名",
+    username: record.username,
+    avatarUrl: record.avatarUrl,
     csrfToken: record.csrfToken,
     expiresAt: record.expiresAt,
     sessionHash: record.sessionHash,
     isAdmin,
+    adminExpiresAt: record.adminExpiresAt,
+    canRenewAdmin: record.issuer === trustedIssuer(env) && record.role === "admin",
   };
 }
 
@@ -210,6 +224,7 @@ export function sameOriginPost(request: Request, url: URL): boolean {
 export async function reviewSession(event: AuthEvent, form: FormData): Promise<AuthSession> {
   const session = await requestSession(event);
   if (!session) error(401, "请先登录后再发表点评。");
+  if (!session.username) error(401, "请重新登录并补充统一账号用户名后再发表点评。");
   if (!sameOriginPost(event.request, event.url) || form.get("csrfToken") !== session.csrfToken) {
     error(403, "请求已失效，请刷新页面后重试。");
   }
@@ -294,27 +309,49 @@ export async function completeLogin(event: AuthEvent, fetcher?: oidc.CustomFetch
   });
   const claims = tokens.claims();
   if (!claims || !claims.sub || claims.sub.length > 255) throw new AuthFailure(400);
-  const userInfo =
-    claims.email_verified === undefined || claims.email === undefined
-      ? await oidc.fetchUserInfo(provider, tokens.access_token, claims.sub)
-      : undefined;
-  if ((claims.email_verified ?? userInfo?.email_verified) !== true) throw new AuthFailure(400);
-  // Email and its verification flag must come from the same verified source.
-  // Never combine an ID Token's email with UserInfo's verification boolean.
-  const email =
-    claims.email_verified === true && normalizedEmail(claims.email)
-      ? normalizedEmail(claims.email)
-      : userInfo?.email_verified === true
-        ? normalizedEmail(userInfo.email)
-        : null;
-  const emailHash = email ? await tokenHash(email) : null;
-  const rawName = claims.name ?? userInfo?.name;
-  const name = typeof rawName === "string" && rawName.trim() ? rawName.trim().slice(0, 160) : "海大同学";
+  // Fresh, authenticated, subject-matched UserInfo is the sole profile/role
+  // source. A locally configured email can never grant management authority.
+  const userInfo = await oidc.fetchUserInfo(provider, tokens.access_token, claims.sub);
+  if (claims.email_verified === false) throw new AuthFailure(400);
+  const email = userInfo.email_verified === true ? normalizedEmail(userInfo.email) : null;
+  const username = profileUsername(userInfo.username);
+  if (
+    !email ||
+    !username ||
+    !Array.isArray(userInfo.roles) ||
+    userInfo.roles.some((role) => role !== "admin" && role !== "user")
+  )
+    throw new AuthFailure(400);
+  const checkedAt = userInfo.roles_checked_at;
+  if (
+    typeof checkedAt !== "number" ||
+    !Number.isSafeInteger(checkedAt) ||
+    checkedAt > seconds() + 30 ||
+    checkedAt + 300 <= seconds()
+  )
+    throw new AuthFailure(400);
+  const role = userInfo.roles.includes("admin") ? "admin" : "user";
+  const roleExpiresAt = Math.min(seconds() + 300, checkedAt + 300, claims.exp);
+  const avatar = profileAvatar(userInfo.picture, config.issuer);
+  const emailHash = await tokenHash(email);
   const user = await db
-    .prepare(`INSERT INTO auth_users (issuer, subject, name, created_at, last_login_at, verified_email_hash) VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (issuer, subject) DO UPDATE SET name = excluded.name, last_login_at = excluded.last_login_at,
-        verified_email_hash = excluded.verified_email_hash RETURNING id, banned_at`)
-    .bind(config.issuer.href, claims.sub, name, seconds(), seconds(), emailHash)
+    .prepare(`INSERT INTO auth_users (issuer, subject, name, created_at, last_login_at, verified_email_hash,
+        username, avatar_url, role, role_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (issuer, subject) DO UPDATE SET name = excluded.name, username = excluded.username,
+        avatar_url = excluded.avatar_url, role = excluded.role, role_expires_at = excluded.role_expires_at,
+        last_login_at = excluded.last_login_at, verified_email_hash = excluded.verified_email_hash RETURNING id, banned_at`)
+    .bind(
+      config.issuer.href,
+      claims.sub,
+      username,
+      seconds(),
+      seconds(),
+      emailHash,
+      username,
+      avatar,
+      role,
+      roleExpiresAt,
+    )
     .first<{ id: number; banned_at: number | null }>();
   if (!user) throw new AuthFailure(503);
   if (user.banned_at !== null) throw new AuthFailure(403);

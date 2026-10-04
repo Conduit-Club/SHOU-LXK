@@ -20,7 +20,6 @@ declare global {
         OIDC_CLIENT_SECRET?: string;
         OIDC_REDIRECT_URI?: string;
         OIDC_ALLOW_LOCAL_HTTP?: string;
-        LXK_ADMIN_EMAILS?: string;
       };
     }
   }

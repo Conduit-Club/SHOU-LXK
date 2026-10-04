@@ -6,7 +6,7 @@ import { Input } from "#lib/components/ui/input/index.js";
 import { Textarea } from "#lib/components/ui/textarea/index.js";
 
 type Section = { lid: string; teachers: { name: string }[] };
-type FormData = { message?: string; title?: string; content?: string; lid?: string } | null;
+type FormData = { message?: string; title?: string; content?: string; lid?: string; visibility?: string } | null;
 
 let {
   heading,
@@ -15,6 +15,7 @@ let {
   sections,
   selectedLid,
   csrfToken,
+  username,
   id,
 }: {
   heading: string;
@@ -23,6 +24,7 @@ let {
   sections?: Section[];
   selectedLid?: string;
   csrfToken: string;
+  username: string;
   id?: string;
 } = $props();
 let verified = $state(false);
@@ -37,9 +39,28 @@ let verified = $state(false);
   <form method="POST" action="?/submitReview" class="mt-5">
     <input type="hidden" name="csrfToken" value={csrfToken} />
     <p class="mb-5 text-sm leading-6 text-muted-foreground">
-      点评公开匿名展示，本站保存账号关联用于内容管理。请勿填写个人联系方式。
+      默认匿名发表，也可使用统一账号用户名。本站保存账号关联用于内容管理，请勿填写个人联系方式。
     </p>
     <Field.Group>
+      <fieldset class="space-y-3 rounded-lg border border-border p-4">
+        <legend class="px-1 text-sm font-medium">发表身份</legend>
+        <label class="flex items-center gap-2 text-sm"
+          ><input
+            type="radio"
+            name="visibility"
+            value="anonymous"
+            checked={form?.visibility !== "username"}
+          />匿名用户（隐藏用户名与头像）</label
+        >
+        <label class="flex items-center gap-2 text-sm"
+          ><input
+            type="radio"
+            name="visibility"
+            value="username"
+            checked={form?.visibility === "username"}
+          />使用账号用户名：{username}</label
+        >
+      </fieldset>
       {#if sections}
         {#if selectedLid || sections.length === 1}
           <input type="hidden" name="lid" value={selectedLid ?? sections[0].lid} />

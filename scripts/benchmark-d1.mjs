@@ -11,6 +11,8 @@ import {
   measureDatabase,
   MemoryCache,
   migration,
+  profileMigrations,
+  withoutPublicIdentity,
 } from "../tests/helpers/local-d1.mjs";
 import { legacyLatest, legacyStats, legacyCatalog, legacyOptions } from "../tests/helpers/legacy-queries.mjs";
 
@@ -89,12 +91,17 @@ try {
   console.log(`Measuring ${cases.length} baseline queries`);
   for (const entry of cases) before.push(await measure(entry.before, entry.values));
   await executeScript(db, await migration());
+  await executeScript(db, await profileMigrations());
   console.log("Migration 0005 applied to ephemeral local D1; comparing optimized queries");
   const report = [];
   for (let index = 0; index < cases.length; index++) {
     const entry = cases[index];
     const after = await measure(entry.after, entry.values);
-    assert.deepEqual(after.results, before[index].results, `${entry.name}: changed query result/order`);
+    assert.deepEqual(
+      withoutPublicIdentity(after.results),
+      before[index].results,
+      `${entry.name}: changed query result/order`,
+    );
     report.push({
       name: entry.name,
       values: entry.values,
