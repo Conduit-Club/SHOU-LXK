@@ -8,6 +8,8 @@ import { Button } from "#lib/components/ui/button/index.js";
 import { Separator } from "#lib/components/ui/separator/index.js";
 import PagePagination from "#lib/components/page-pagination.svelte";
 import ReviewSendingCard from "#lib/components/review-sending-card.svelte";
+import ReviewLoginCard from "#lib/components/review-login-card.svelte";
+import { page } from "$app/state";
 import type { ActionData, PageData } from "./$types";
 
 let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -56,7 +58,17 @@ const pageUrl = (page: number, sort = data.sort) => {
     </ul>
   </section>
 
-  <ReviewSendingCard heading="评价教师" turnstileSiteKey={data.turnstileSiteKey} {form} />
+  {#if data.auth}
+    <ReviewSendingCard
+      id="review-composer"
+      heading="评价教师"
+      turnstileSiteKey={data.turnstileSiteKey}
+      csrfToken={data.auth.csrfToken}
+      {form}
+    />
+  {:else}
+    <ReviewLoginCard returnTo={`${page.url.pathname}${page.url.search}#review-composer`} enabled={data.authEnabled} />
+  {/if}
 
   <div class="mb-5 flex flex-wrap items-center justify-between gap-4">
     <h2 class="text-lg font-semibold tracking-tight">同学评价</h2>

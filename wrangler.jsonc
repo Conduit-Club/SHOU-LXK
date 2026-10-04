@@ -15,11 +15,13 @@
   ],
   "workers_dev": false,
   "vars": {
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFMgPNoCPDd8BWht"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFMgPNoCPDd8BWht",
+    "OIDC_ISSUER": "https://auth.shoumc.com/api/auth",
+    "OIDC_CLIENT_ID": "shou-lxk-production",
+    "OIDC_REDIRECT_URI": "https://lxk.shoumc.com/auth/callback",
+    "OIDC_ALLOW_LOCAL_HTTP": "false",
   },
-  "routes": [
-    { "pattern": "lxk.shoumc.com", "custom_domain": true },
-  ],
+  "routes": [{ "pattern": "lxk.shoumc.com", "custom_domain": true }],
   "observability": {
     "enabled": true,
     "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },

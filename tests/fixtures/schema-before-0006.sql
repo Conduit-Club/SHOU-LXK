@@ -32,39 +32,6 @@ CREATE TABLE teachers (
     name TEXT NOT NULL UNIQUE CHECK (length(trim(name)) > 0)
 ) STRICT;
 
--- A business-site identity, keyed by the OIDC issuer and stable subject. Email
--- and upstream tokens are not persisted or exposed as review author details.
-CREATE TABLE auth_users (
-    id INTEGER PRIMARY KEY,
-    issuer TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    name TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    last_login_at INTEGER NOT NULL,
-    UNIQUE (issuer, subject)
-) STRICT;
-
-CREATE TABLE auth_sessions (
-    token_hash TEXT PRIMARY KEY CHECK (length(token_hash) = 64),
-    user_id INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
-    csrf_token TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL CHECK (expires_at > created_at)
-) STRICT;
-CREATE INDEX auth_sessions_expiry_idx ON auth_sessions(expires_at);
-CREATE INDEX auth_sessions_user_idx ON auth_sessions(user_id);
-
-CREATE TABLE auth_login_transactions (
-    state_hash TEXT PRIMARY KEY CHECK (length(state_hash) = 64),
-    browser_hash TEXT NOT NULL CHECK (length(browser_hash) = 64),
-    verifier TEXT NOT NULL,
-    nonce TEXT NOT NULL,
-    return_to TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL CHECK (expires_at > created_at)
-) STRICT;
-CREATE INDEX auth_login_transactions_expiry_idx ON auth_login_transactions(expires_at);
-
 CREATE TABLE course_section_teachers (
     lid TEXT NOT NULL REFERENCES course_section(lid),
     teacher_id INTEGER NOT NULL REFERENCES teachers(id),
@@ -80,13 +47,11 @@ CREATE TABLE course_reviews (
     lid TEXT NOT NULL REFERENCES course_section(lid),
     title TEXT NOT NULL,
     content TEXT NOT NULL,
-    posted_at_local TEXT NOT NULL,
-    author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL
+    posted_at_local TEXT NOT NULL
 ) STRICT;
 
 CREATE INDEX course_reviews_lid_idx ON course_reviews(lid);
 CREATE INDEX course_reviews_latest_idx ON course_reviews(posted_at_local DESC, id DESC, lid);
-CREATE INDEX course_reviews_author_idx ON course_reviews(author_id);
 
 CREATE TRIGGER course_reviews_count_insert AFTER INSERT ON course_reviews
 BEGIN
@@ -110,13 +75,11 @@ CREATE TABLE teacher_reviews (
     teacher_id INTEGER NOT NULL REFERENCES teachers(id),
     title TEXT NOT NULL,
     content TEXT NOT NULL,
-    posted_at_local TEXT NOT NULL,
-    author_id INTEGER REFERENCES auth_users(id) ON DELETE SET NULL
+    posted_at_local TEXT NOT NULL
 ) STRICT;
 
 CREATE INDEX teacher_reviews_teacher_posted_idx ON teacher_reviews(teacher_id, posted_at_local, id);
 CREATE INDEX teacher_reviews_latest_idx ON teacher_reviews(posted_at_local DESC, id DESC, teacher_id);
-CREATE INDEX teacher_reviews_author_idx ON teacher_reviews(author_id);
 
 CREATE TABLE category_options (
     category_type TEXT NOT NULL CHECK (category_type IN ('attr', 'college', 'lessonType', 'score')),

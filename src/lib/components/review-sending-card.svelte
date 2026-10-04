@@ -14,19 +14,31 @@ let {
   form,
   sections,
   selectedLid,
+  csrfToken,
+  id,
 }: {
   heading: string;
   turnstileSiteKey: string;
   form: FormData;
   sections?: Section[];
   selectedLid?: string;
+  csrfToken: string;
+  id?: string;
 } = $props();
 let verified = $state(false);
 </script>
 
-<section class="mb-10 rounded-xl border border-border bg-card p-5 shadow-xs sm:p-6" aria-labelledby="review-form-title">
+<section
+  {id}
+  class="mb-10 rounded-xl border border-border bg-card p-5 shadow-xs sm:p-6"
+  aria-labelledby="review-form-title"
+>
   <h2 id="review-form-title" class="text-lg font-semibold tracking-tight">{heading}</h2>
   <form method="POST" action="?/submitReview" class="mt-5">
+    <input type="hidden" name="csrfToken" value={csrfToken} />
+    <p class="mb-5 text-sm leading-6 text-muted-foreground">
+      点评公开匿名展示，本站保存账号关联用于内容管理。请勿填写个人联系方式。
+    </p>
     <Field.Group>
       {#if sections}
         {#if selectedLid || sections.length === 1}

@@ -21,8 +21,8 @@ test("course detail scopes counts, recommendations, pagination and writing inten
       INSERT INTO teachers VALUES (1,'教师');
       INSERT INTO course_section_teachers VALUES ('s1',1,1);
       WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < 21)
-      INSERT INTO course_reviews SELECT x,'s1','Title','Content','2026-01-01' FROM n;
-      INSERT INTO course_reviews VALUES (22,'s2','Other class','Content','2026-01-02');
+      INSERT INTO course_reviews(id,lid,title,content,posted_at_local) SELECT x,'s1','Title','Content','2026-01-01' FROM n;
+      INSERT INTO course_reviews(id,lid,title,content,posted_at_local) VALUES (22,'s2','Other class','Content','2026-01-02');
     `,
     );
     const event = (id, query = "", database = db) => ({

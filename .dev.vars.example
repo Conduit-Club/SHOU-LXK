@@ -1,3 +1,10 @@
 # Cloudflare public test keys. Never use these in production.
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+
+# Separate development OIDC client; register this exact local callback in Auth.
+OIDC_ISSUER=http://localhost:8788/api/auth
+OIDC_CLIENT_ID=shou-lxk-local
+OIDC_CLIENT_SECRET=replace-with-development-client-secret
+OIDC_REDIRECT_URI=http://localhost:5173/auth/callback
+OIDC_ALLOW_LOCAL_HTTP=true

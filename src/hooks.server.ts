@@ -1,5 +1,7 @@
 import type { Handle, HandleServerError } from "@sveltejs/kit/hooks";
 import { getBindings } from "#lib/server/platform.js";
+import { readSession } from "#lib/server/auth.js";
+import type { AuthSession } from "#lib/server/auth.js";
 
 // Never serialize provider errors, SQL, bindings, quota details or stack traces.
 export const handleError: HandleServerError = ({ kind }) => {
@@ -32,5 +34,13 @@ export const handle: Handle = async ({ event, resolve }) => {
       },
     );
   }
-  return resolve(event);
+  let session: Promise<AuthSession | null> | undefined;
+  event.locals.getSession = () => (session ??= readSession(event));
+  const response = await resolve(event);
+  // Layouts contain the current account and CSRF token. Only the explicit
+  // public JSON cache in home-cache.ts may be shared across visitors.
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.append("Vary", "Cookie");
+  if (event.url.pathname.startsWith("/auth/")) response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
 };
