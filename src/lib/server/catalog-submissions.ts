@@ -5,10 +5,13 @@ import { getBindings } from "./platform.js";
 import { invalidateCatalog } from "./home-cache.js";
 import { moderationPaging } from "./moderation.js";
 import type { requireAdmin } from "./moderation.js";
+import { DIRECT_CATALOG_LIMITS } from "../catalog.js";
 import type { CatalogDraft, CatalogKind, CatalogSubmission } from "../catalog.js";
 
 type CatalogEvent = Pick<RequestEvent, "platform" | "url" | "cookies" | "locals" | "request">;
 type AdminContext = Awaited<ReturnType<typeof requireAdmin>>;
+type SubmitterContext = Awaited<ReturnType<typeof requireSubmitter>>;
+const DIRECT_REASON = "管理员直接收录";
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const COLUMNS = `id,kind,name,course_id,college,elective_type,credits,lid,note,status,created_at,
   reviewed_at,reviewed_by,reason,published_course_id,published_lid,published_teacher_id,approved_payload`;
@@ -70,21 +73,7 @@ export async function requireSubmitter(event: CatalogEvent, form?: FormData) {
   };
 }
 
-export async function submitCatalog(
-  context: Awaited<ReturnType<typeof requireSubmitter>>,
-  id: string,
-  draft: CatalogDraft,
-) {
-  const { db, actor, guard, guardValues } = context;
-  // The form's UUID makes network retries idempotent, without accepting any client role/owner/state.
-  const prior = await db
-    .prepare("SELECT author_id FROM catalog_submissions WHERE id=?")
-    .bind(id)
-    .first<{ author_id: number }>();
-  if (prior) {
-    if (prior.author_id !== actor.userId) error(409, "提交编号已被使用，请刷新后重试。");
-    return false;
-  }
+function catalogTarget(draft: CatalogDraft) {
   // Match SQLite NOCASE: fold ASCII consistently, preserve non-ASCII names.
   const key =
     draft.kind === "course"
@@ -94,14 +83,24 @@ export async function submitCatalog(
     draft.kind === "course"
       ? "NOT EXISTS (SELECT 1 FROM courses WHERE course_id=? COLLATE NOCASE)"
       : "NOT EXISTS (SELECT 1 FROM teachers WHERE name=? COLLATE NOCASE)";
-  const result = await db
+  return { key, official };
+}
+
+function catalogInsert(context: SubmitterContext, id: string, draft: CatalogDraft, admin?: AdminContext) {
+  const { db, actor } = context;
+  const { key, official } = catalogTarget(draft);
+  // Only server-approved self-review records count towards the maintenance quota.
+  // Direct publication neither fills pending slots nor consumes ordinary submission limits.
+  const directRecord = "(status='approved' AND reviewed_by=author_id AND reason=?)";
+  const quotaFilter = admin ? directRecord : `NOT ${directRecord}`;
+  return db
     .prepare(`INSERT INTO catalog_submissions
     (id,author_id,kind,target_key,name,course_id,college,elective_type,credits,lid,note,created_at)
-    SELECT ?,?,?,?,?,?,?,?,?,?,?,unixepoch() WHERE ${guard} AND ${official}
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,unixepoch() WHERE ${context.guard} ${admin ? `AND ${admin.guard}` : ""} AND ${official}
       AND NOT EXISTS (SELECT 1 FROM catalog_submissions WHERE target_key=? AND status='pending')
-      AND (SELECT COUNT(*) FROM catalog_submissions WHERE author_id=? AND created_at>unixepoch()-3600)<5
-      AND (SELECT COUNT(*) FROM catalog_submissions WHERE author_id=? AND created_at>unixepoch()-86400)<20
-      AND (SELECT COUNT(*) FROM catalog_submissions WHERE author_id=? AND status='pending')<10
+      AND (SELECT COUNT(*) FROM catalog_submissions WHERE author_id=? AND created_at>unixepoch()-3600 AND ${quotaFilter})<?
+      AND (SELECT COUNT(*) FROM catalog_submissions WHERE author_id=? AND created_at>unixepoch()-86400 AND ${quotaFilter})<?
+      ${admin ? "" : "AND (SELECT COUNT(*) FROM catalog_submissions WHERE author_id=? AND status='pending')<10"}
     ON CONFLICT DO NOTHING`)
     .bind(
       id,
@@ -115,26 +114,47 @@ export async function submitCatalog(
       draft.credits,
       draft.lid,
       draft.note,
-      ...guardValues,
+      ...context.guardValues,
+      ...(admin?.guardValues ?? []),
       draft.courseId ?? draft.name,
       key,
       actor.userId,
+      DIRECT_REASON,
+      admin ? DIRECT_CATALOG_LIMITS.hourly : 5,
       actor.userId,
-      actor.userId,
-    )
-    .run();
-  if (result.meta.changes) return true;
-  // Resolve a race to the same UUID before returning a duplicate or rate error.
-  const retry = await db
-    .prepare("SELECT author_id FROM catalog_submissions WHERE id=?")
+      DIRECT_REASON,
+      admin ? DIRECT_CATALOG_LIMITS.daily : 20,
+      ...(admin ? [] : [actor.userId]),
+    );
+}
+
+async function existingSubmission(context: SubmitterContext, id: string, direct = false) {
+  const prior = await context.db
+    .prepare("SELECT author_id,status FROM catalog_submissions WHERE id=?")
     .bind(id)
-    .first<{ author_id: number }>();
-  if (retry?.author_id === actor.userId) return false;
+    .first<{ author_id: number; status: string }>();
+  if (!prior) return false;
+  if (prior.author_id !== context.actor.userId) error(409, "提交编号已被使用，请刷新后重试。");
+  if (direct && prior.status !== "approved") error(409, "此补充已提交，请从目录审核查看处理状态，或刷新后重新填写。");
+  return true;
+}
+
+async function submissionFailure(
+  context: SubmitterContext,
+  draft: CatalogDraft,
+  admin?: AdminContext,
+  atomicFailure = false,
+): Promise<never> {
+  const { db, guard, guardValues } = admin ?? context;
   const authorized = await db
     .prepare(`SELECT ${guard} AS ok`)
     .bind(...guardValues)
     .first<{ ok: number }>();
-  if (!authorized?.ok) error(401, "登录状态已失效，请重新登录后提交。");
+  if (!authorized?.ok) {
+    if (admin) error(403, "管理员权限已失效，请重新验证后直接收录；本次没有保存为待审补充。");
+    error(401, "登录状态已失效，请重新登录后提交。");
+  }
+  const { key, official } = catalogTarget(draft);
   const exists = await db
     .prepare(`SELECT NOT (${official}) AS official,
     EXISTS (SELECT 1 FROM catalog_submissions WHERE target_key=? AND status='pending') AS pending`)
@@ -142,10 +162,36 @@ export async function submitCatalog(
     .first<{ official: number; pending: number }>();
   if (exists?.official) error(409, "此课程号或老师已在目录中，请先搜索现有条目。");
   if (exists?.pending) error(409, "此课程号或老师已有待审补充，请勿重复提交。");
+  if (admin && draft.lid) {
+    const section = await db.prepare("SELECT 1 AS found FROM course_section WHERE lid=?").bind(draft.lid).first();
+    if (section) error(409, "此班级编号已在目录中，请核实编号后重试。");
+  }
+  if (atomicFailure) error(409, "直接收录未完成，权限或目录信息发生变化，请刷新核实后重试。本次没有保存为待审补充。");
+  if (admin)
+    error(
+      429,
+      `直接收录过于频繁：每小时最多${DIRECT_CATALOG_LIMITS.hourly}条、每天${DIRECT_CATALOG_LIMITS.daily}条。请稍后再试。`,
+    );
   error(429, "提交过于频繁：每小时最多5条、每天20条，同时待审最多10条。请稍后再试。");
 }
 
-export async function loadOwnSubmissions(context: Awaited<ReturnType<typeof requireSubmitter>>, url: URL) {
+export async function submitCatalog(context: SubmitterContext, id: string, draft: CatalogDraft) {
+  // The form's UUID makes network retries idempotent, without accepting any client role/owner/state.
+  if (await existingSubmission(context, id)) return false;
+  const result = await catalogInsert(context, id, draft).run();
+  if (result.meta.changes) return true;
+  if (await existingSubmission(context, id)) return false;
+  return submissionFailure(context, draft);
+}
+
+export async function loadOwnSubmission(context: SubmitterContext, id: string) {
+  return context.db
+    .prepare(`SELECT ${COLUMNS} FROM catalog_submissions WHERE id=? AND author_id=?`)
+    .bind(submissionId(id), context.actor.userId)
+    .first<CatalogSubmission>();
+}
+
+export async function loadOwnSubmissions(context: SubmitterContext, url: URL) {
   const { db, actor } = context;
   const count = await db
     .prepare("SELECT COUNT(*) AS total FROM catalog_submissions WHERE author_id=?")
@@ -194,21 +240,15 @@ export async function loadCatalogQueue(context: AdminContext, url: URL) {
   return { submissions: list.results, filters: { status, kind, q }, ...paging };
 }
 
-export async function decideCatalog(
+function catalogDecisionStatements(
   context: AdminContext,
   id: string,
   approved: boolean,
   reason: string,
-  form: FormData,
-  url: URL,
+  draft: CatalogDraft | null,
+  onlyNewSubmission = false,
 ) {
   const { db, actor, guard, guardValues } = context;
-  const original = await db
-    .prepare("SELECT kind,status FROM catalog_submissions WHERE id=?")
-    .bind(id)
-    .first<{ kind: CatalogKind; status: string }>();
-  if (!original || original.status !== "pending") return false;
-  const draft = approved ? parseCatalogDraft(form, original.kind) : null;
   const operation = crypto.randomUUID();
   const publishedLid = draft?.kind === "course" ? (draft.lid ?? `community-${id}`) : null;
   const payload = draft ? JSON.stringify({ ...draft, lid: publishedLid }) : null;
@@ -222,7 +262,8 @@ export async function decideCatalog(
   statements.push(
     db
       .prepare(`INSERT INTO catalog_submission_events (operation_id,submission_id,actor_id,action,reason,payload,created_at)
-    SELECT ?,id,?,?,?,?,unixepoch() FROM catalog_submissions WHERE id=? AND status='pending' AND ${guard} ${publishCheck}`)
+    SELECT ?,id,?,?,?,?,unixepoch() FROM catalog_submissions WHERE id=? AND status='pending'
+      ${onlyNewSubmission ? "AND changes()>0" : ""} AND ${guard} ${publishCheck}`)
       .bind(
         operation,
         actor.userId,
@@ -282,9 +323,63 @@ export async function decideCatalog(
         id,
       ),
   );
+  return statements;
+}
+
+export async function publishCatalog(
+  context: SubmitterContext,
+  admin: AdminContext,
+  id: string,
+  draft: CatalogDraft,
+  url: URL,
+) {
+  if (context.actor.userId !== admin.actor.userId || context.actor.sessionHash !== admin.actor.sessionHash)
+    error(403, "管理员账号已变化，请刷新页面后重试。");
+  if (await existingSubmission(context, id, true)) return false;
+  const statements = [
+    catalogInsert(context, id, draft, admin),
+    ...catalogDecisionStatements(admin, id, true, DIRECT_REASON, draft, true),
+    // A direct publication must not leave a pending row. Reuse the existing
+    // immutable-decision trigger as a transaction assertion: this UPDATE aborts
+    // the entire batch only if approval failed after the new proposal was inserted.
+    context.db
+      .prepare("UPDATE catalog_submissions SET status='pending' WHERE id=? AND author_id=? AND status='pending'")
+      .bind(id, context.actor.userId),
+  ];
+  let results: D1Result[];
+  try {
+    results = await context.db.batch(statements);
+  } catch (reason) {
+    if (String(reason).includes("LXK_SUBMISSION_ALREADY_REVIEWED"))
+      return submissionFailure(context, draft, admin, true);
+    throw reason;
+  }
+  if (results.at(-2)?.meta.changes) {
+    await invalidateCatalog(url);
+    return true;
+  }
+  // Concurrent retries reuse the saved record and never create a second audit.
+  if (await existingSubmission(context, id, true)) return false;
+  return submissionFailure(context, draft, admin);
+}
+
+export async function decideCatalog(
+  context: AdminContext,
+  id: string,
+  approved: boolean,
+  reason: string,
+  form: FormData,
+  url: URL,
+) {
+  const original = await context.db
+    .prepare("SELECT kind,status FROM catalog_submissions WHERE id=?")
+    .bind(id)
+    .first<{ kind: CatalogKind; status: string }>();
+  if (!original || original.status !== "pending") return false;
+  const draft = approved ? parseCatalogDraft(form, original.kind) : null;
   // D1 batches are transactional. A collision, failed section insert or trigger
   // rolls back the audit, catalog inserts, counters and decision together.
-  const results = await db.batch(statements);
+  const results = await context.db.batch(catalogDecisionStatements(context, id, approved, reason, draft));
   const changed = !!results.at(-1)?.meta.changes;
   if (changed && approved) await invalidateCatalog(url);
   return changed;

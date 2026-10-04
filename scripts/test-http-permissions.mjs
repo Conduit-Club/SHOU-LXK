@@ -99,7 +99,7 @@ try {
       assert.equal(response.status, 200, `${user ?? "guest"} GET ${path}`);
       const html = await response.text();
       assert.equal(
-        /href="\/admin(?:\?|")|action="\/admin\/mode"|管理模式：|name="reviewId"|name="userId"/.test(html),
+        /href="\/admin(?:[/?"])|action="\/admin\/mode"|管理模式：|name="reviewId"|name="userId"/.test(html),
         false,
         `management UI hidden on ${path}`,
       );
@@ -145,6 +145,7 @@ try {
   checks++;
   const previousFetch = globalThis.fetch;
   let captchaCalls = 0;
+  let expireAdminDuringCaptcha = false;
   env.TURNSTILE_SECRET_KEY = "http-fixture-secret";
   globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
@@ -155,6 +156,10 @@ try {
       assert.equal(values.get("secret"), "http-fixture-secret");
       const token = values.get("response");
       assert.ok(["http-review", "http-catalog"].includes(token));
+      if (expireAdminDuringCaptcha) {
+        expireAdminDuringCaptcha = false;
+        await db.prepare("UPDATE auth_users SET role_expires_at=0 WHERE id=1").run();
+      }
       return Response.json({
         success: true,
         hostname: "lxk.invalid",
@@ -244,6 +249,81 @@ try {
     assert.equal((await db.prepare("SELECT reviews FROM site_stats WHERE id=1").first()).reviews, 7);
     assert.equal(captchaCalls, 6, "bad CSRF never reaches captcha verification");
     checks++;
+    checks++;
+    const direct = {
+      kind: "teacher",
+      name: "Local HTTP directly published teacher",
+      submissionMode: "direct",
+      submissionId: crypto.randomUUID(),
+      "cf-turnstile-response": "http-catalog",
+    };
+    for (const user of [1, 2]) {
+      const denied = await request("/submissions?/submit", user, direct);
+      assert.equal(denied.status, 403);
+      checks++;
+    }
+    assert.equal(captchaCalls, 6, "expired or forged direct publication is denied before captcha");
+    const expiredHtml = await (await request("/submissions?kind=teacher", 1)).text();
+    assert.ok(expiredHtml.includes("恢复当前表单"));
+    assert.ok(expiredHtml.includes('target="_blank"'));
+    assert.ok(expiredHtml.includes('name="name"'), "expired permission retains the form");
+    checks++;
+    await db.prepare("UPDATE auth_users SET role_expires_at=unixepoch()+3600 WHERE id=1").run();
+    const directHtml = await (await request("/submissions?kind=teacher", 1)).text();
+    assert.ok(directHtml.includes("直接收录并公开"));
+    assert.ok(directHtml.includes('name="submissionMode" value="direct"'));
+    assert.ok(directHtml.includes('href="/admin/submissions?kind=teacher"'));
+    checks++;
+    const published = await request("/submissions?/submit", 1, direct);
+    assert.equal(published.status, 303);
+    const publishedLocation = published.headers.get("location");
+    assert.ok(publishedLocation.includes(`result=${direct.submissionId}`));
+    const resultHtml = await (await request(publishedLocation, 1)).text();
+    assert.ok(resultHtml.includes("条目已公开"));
+    assert.ok(resultHtml.includes("查看已收录条目"));
+    assert.deepEqual(
+      await db
+        .prepare("SELECT author_id,reviewed_by,status,reason FROM catalog_submissions WHERE id=?")
+        .bind(direct.submissionId)
+        .first(),
+      { author_id: 1, reviewed_by: 1, status: "approved", reason: "管理员直接收录" },
+    );
+    checks++;
+    assert.equal((await request("/submissions?/submit", 1, { ...direct, name: "Must not replace" })).status, 303);
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submission_events").first()).n, 1);
+    checks++;
+    const courseId = crypto.randomUUID();
+    assert.equal(
+      (
+        await request("/submissions?/submit", 1, {
+          ...direct,
+          kind: "course",
+          name: "Local HTTP maintenance course",
+          courseId: "HTTP-NEW",
+          college: "Fixture college",
+          electiveType: "Fixture type",
+          credits: "2",
+          submissionId: courseId,
+        })
+      ).status,
+      303,
+    );
+    assert.equal((await request(`/courses/HTTP-NEW?lid=community-${courseId}`, 2)).status, 200);
+    checks++;
+    expireAdminDuringCaptcha = true;
+    const failedId = crypto.randomUUID();
+    const failed = await request("/submissions?/submit", 1, {
+      ...direct,
+      name: "Must not become pending",
+      submissionId: failedId,
+    });
+    assert.equal(failed.status, 403);
+    const failedHtml = await failed.text();
+    assert.ok(failedHtml.includes("没有保存为待审补充"));
+    assert.ok(failedHtml.includes('value="Must not become pending"'));
+    assert.ok(failedHtml.includes("恢复当前表单"));
+    assert.equal(await db.prepare("SELECT id FROM catalog_submissions WHERE id=?").bind(failedId).first(), null);
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submission_events").first()).n, 2);
     checks++;
   } finally {
     globalThis.fetch = previousFetch;

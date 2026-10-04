@@ -1,6 +1,8 @@
 import { fail, isHttpError } from "@sveltejs/kit";
 import { requireAdmin, requireAdminPost, moderationReason } from "#lib/server/moderation.js";
 import { decideCatalog, loadCatalogQueue, submissionId } from "#lib/server/catalog-submissions.js";
+import { catalogLink } from "#lib/catalog.js";
+import type { CatalogSubmission } from "#lib/catalog.js";
 import type { PageServerLoad, Actions } from "./$types";
 
 export const load: PageServerLoad = async (event) => loadCatalogQueue(await requireAdmin(event), event.url);
@@ -22,10 +24,20 @@ export const actions = {
         form,
         event.url,
       );
+      const published =
+        changed && decision === "approve"
+          ? await context.db
+              .prepare(
+                "SELECT published_teacher_id,published_course_id,published_lid FROM catalog_submissions WHERE id=? AND status='approved'",
+              )
+              .bind(id)
+              .first<Pick<CatalogSubmission, "published_teacher_id" | "published_course_id" | "published_lid">>()
+          : null;
       return changed
         ? {
             message: decision === "approve" ? "审核通过，条目已进入公开目录。" : "已拒绝，提交者可查看审核理由。",
             submissionId: id,
+            resultLink: published ? catalogLink(published) : null,
           }
         : fail(409, {
             message: "状态或权限已变化，或课程号、班级编号、老师已收录。请刷新核对，重复条目可填写理由拒绝。",

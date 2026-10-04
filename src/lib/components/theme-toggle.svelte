@@ -21,7 +21,7 @@ function toggle() {
   onclick={toggle}
   aria-label={light ? "切换深色主题" : "切换浅色主题"}
   title={light ? "切换深色主题" : "切换浅色主题"}
-  class="theme-toggle flex size-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary"
+  class="theme-toggle flex size-10 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-accent hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 >
   {#if light}<Moon class="size-4" aria-hidden="true" />{:else}<Sun class="size-4" aria-hidden="true" />{/if}
 </button>

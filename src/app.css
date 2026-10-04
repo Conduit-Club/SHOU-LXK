@@ -2,6 +2,9 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 
+/* Component variants must follow the site's choice, not the OS preference. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   color-scheme: dark;
   --background: oklch(0.135 0.006 255);
@@ -77,6 +80,7 @@
 
 .site-shell {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
   gap: 10px;
 }
@@ -90,16 +94,18 @@
 .site-account {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
-  grid-row: 2;
+  gap: 8px;
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-end;
 }
 .site-account form {
   min-width: 0;
 }
 .site-navigation {
   display: grid;
+  grid-column: 1 / -1;
   min-width: 0;
   gap: 10px;
 }
@@ -134,9 +140,18 @@
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
+[aria-label="目录补充类型"] a[aria-current="page"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+[aria-label="目录补充类型"] a:not([aria-current]):hover {
+  background: var(--accent);
+  border-color: var(--primary);
+}
 @media (min-width: 768px) {
   .site-shell {
-    grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+    grid-template-columns: minmax(220px, 1fr) auto;
     gap: 12px 24px;
   }
   .site-account {
@@ -175,7 +190,9 @@
 }
 :root[data-theme="light"] .top-search,
 :root[data-theme="light"] .directory-search,
-:root[data-theme="light"] input:not([type="radio"]):not([type="hidden"]),
+:root[data-theme="light"] [data-slot="input-group"],
+:root[data-theme="light"]
+  input:not([type="radio"]):not([type="hidden"]):not([data-slot="input-group-control"]):not(#global-search),
 :root[data-theme="light"] textarea {
   background: #fdebed;
 }
@@ -187,16 +204,147 @@
   box-shadow: none;
 }
 :root[data-theme="light"] [data-slot="button"].bg-primary {
-  background: #e8a7b0;
-  color: #5d453e;
-  border-bottom: 2px solid #d17d8a;
+  background: var(--primary);
+  color: var(--primary-foreground);
   box-shadow: none;
+}
+:root[data-theme="light"] [data-slot="button"].bg-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: #74313e;
+}
+:root[data-theme="light"] [data-slot="select-trigger"] {
+  background: var(--popover);
+  border-color: #b29397;
+}
+:root[data-theme="light"] [data-slot="select-trigger"]:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--primary);
 }
 :root[data-theme="light"] [data-slot="button"]:active {
   transform: translateY(1px);
 }
 :root[data-theme="light"] .review-management {
   background: #fdebed;
+}
+
+.header-control,
+.account-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--foreground);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.header-control[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+.header-control:hover,
+.account-menu-trigger:hover,
+.account-menu[open] > summary {
+  border-color: var(--primary);
+}
+.account-menu {
+  position: relative;
+  min-width: 0;
+}
+.account-menu-trigger {
+  list-style: none;
+}
+.account-menu-trigger::-webkit-details-marker {
+  display: none;
+}
+.account-identity {
+  display: flex;
+  min-width: 0;
+  max-width: 160px;
+}
+.account-menu-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(280px, calc(100vw - 32px));
+  max-height: calc(100dvh - 90px);
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 12px 32px #0002;
+  z-index: 60;
+}
+.account-menu-heading {
+  padding: 8px 10px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.account-menu-heading strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.account-menu-heading span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.account-menu-panel > a,
+.account-menu-panel form > button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.account-menu-panel :is(a, button):hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.account-menu-panel small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.account-menu-logout {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+@media (max-width: 767px) {
+  .desktop-management-toggle {
+    display: none;
+  }
+}
+@media (max-width: 639px) {
+  .account-identity {
+    width: 34px;
+  }
+  .account-identity > span > span:last-child {
+    display: none;
+  }
+  .account-menu-trigger {
+    padding: 2px;
+    border-color: transparent;
+  }
+  .site-header-top > a {
+    gap: 8px;
+  }
+  .site-account {
+    gap: 4px;
+  }
+}
+@media (max-width: 380px) {
+  .site-header-top > a > span:last-child > span:last-child {
+    display: none;
+  }
 }
 
 @theme inline {
@@ -258,7 +406,7 @@
 
 @layer base {
   body {
-    min-width: 320px;
+    min-width: 0;
   }
   a,
   button,
@@ -266,9 +414,14 @@
     -webkit-tap-highlight-color: transparent;
   }
   a:focus-visible,
+  button:focus-visible,
   summary:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 4px;
+  }
+  button:not(:disabled),
+  summary {
+    cursor: pointer;
   }
   ::selection {
     background: var(--primary);

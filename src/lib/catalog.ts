@@ -1,4 +1,5 @@
 export type CatalogKind = "course" | "teacher";
+export const DIRECT_CATALOG_LIMITS = { hourly: 60, daily: 300 };
 export type CatalogDraft = {
   kind: CatalogKind;
   name: string;
@@ -33,7 +34,9 @@ export type CatalogSubmission = {
 export const catalogStatus = { pending: "待审核", approved: "已收录", rejected: "未通过" };
 export const catalogTime = (seconds: number) =>
   new Date(seconds * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
-export const catalogLink = (item: CatalogSubmission) =>
+export const catalogLink = (
+  item: Pick<CatalogSubmission, "published_teacher_id" | "published_course_id" | "published_lid">,
+) =>
   item.published_teacher_id
     ? `/teachers/${item.published_teacher_id}`
     : item.published_course_id && item.published_lid

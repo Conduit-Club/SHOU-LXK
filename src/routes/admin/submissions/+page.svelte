@@ -15,19 +15,34 @@ const pageUrl = (number: number) => {
 };
 </script>
 
-<svelte:head><title>目录补充审核 · SHOU LXK</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
+<svelte:head><title>老师 / 课程审核 · SHOU LXK</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
 <main id="main-content" class="mx-auto min-w-0 max-w-4xl px-4 py-8 sm:px-6">
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <h1 class="text-2xl font-semibold">目录补充审核</h1>
-    <a href="/admin" class="text-sm text-primary">点评管理 →</a>
+    <h1 class="text-2xl font-semibold">老师 / 课程审核</h1>
   </div>
   <p class="mt-3 text-sm leading-7 text-muted-foreground">
-    核实课程号、老师姓名与课程信息后收录。通过或拒绝均需填写理由；原始提交保留，理由可由提交者查看。通过后才能浏览、搜索并发表点评。
+    此处处理普通用户的目录补充。核实课程号、老师姓名与课程信息后收录；通过或拒绝均需填写理由，提交者可查看。管理员自己补齐目录，可通过“直接添加”立即收录并保留操作记录。
   </p>
+  <nav class="mt-5 flex flex-wrap gap-3 text-sm" aria-label="目录管理入口">
+    <a href="/admin" class="rounded-md border border-border px-4 py-2">点评管理</a>
+    <a
+      href="/admin/submissions?kind=teacher"
+      class="rounded-md border border-border px-4 py-2"
+      aria-current={data.filters.kind === "teacher" ? "page" : undefined}>老师审核</a
+    >
+    <a
+      href="/admin/submissions?kind=course"
+      class="rounded-md border border-border px-4 py-2"
+      aria-current={data.filters.kind === "course" ? "page" : undefined}>课程审核</a
+    >
+    <a href="/submissions?kind=teacher" class="rounded-md bg-primary px-4 py-2 text-primary-foreground">直接添加老师</a>
+    <a href="/submissions?kind=course" class="rounded-md bg-primary px-4 py-2 text-primary-foreground">直接添加课程</a>
+  </nav>
   <p class="mt-2 text-xs text-muted-foreground">权限每次验证最多有效一小时，到期后请通过顶部入口重新验证。</p>
-  {#if form?.message}<p class="mt-5 rounded-lg border border-border bg-muted p-4 text-sm" role="status">
-      {form.message}
-    </p>{/if}
+  {#if form?.message}<div class="mt-5 rounded-lg border border-border bg-muted p-4 text-sm" role="status">
+      <p>{form.message}</p>
+      {#if form.resultLink}<a href={form.resultLink} class="mt-2 inline-flex text-primary">查看已收录条目 →</a>{/if}
+    </div>{/if}
   <form method="GET" class="my-6 grid min-w-0 gap-3 rounded-lg border border-border p-4 sm:grid-cols-3">
     <label class="catalog-field" for="queue-search"
       ><span>姓名、课程名或课程号</span><input
@@ -61,7 +76,8 @@ const pageUrl = (number: number) => {
       <li class="min-w-0 rounded-xl border border-border bg-card p-4 leading-7 wrap-anywhere sm:p-6">
         <p class="flex flex-wrap justify-between gap-2">
           <span class="font-semibold">{item.kind === "course" ? "课程" : "老师"} · {item.name}</span><span
-            class="text-sm text-primary">{catalogStatus[item.status]}</span
+            class="rounded-full border border-border bg-muted px-3 py-0.5 text-sm text-primary"
+            >{catalogStatus[item.status]}</span
           >
         </p>
         <p class="mt-1 text-xs text-muted-foreground">

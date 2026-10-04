@@ -400,3 +400,164 @@ test("approval rechecks central authority/collisions; insertion failure rolls ba
     );
   });
 });
+
+test("verified administrators directly publish usable catalog entries with audit, result links and cache invalidation", async () => {
+  await fixture(async (db) => {
+    const cache = new MemoryCache();
+    const previous = globalThis.caches;
+    globalThis.caches = { open: async () => cache };
+    try {
+      const url = new URL("https://lxk.shoumc.com");
+      await loadLandingData(db, url);
+      await loadCatalogPublicData(db, url);
+      const teacher = await submit(db, { kind: "teacher", name: "管理员新老师", submissionMode: "direct" }, 1);
+      const course = await submit(db, { ...sample, submissionMode: "pending", authorId: "2", reviewedBy: "2" }, 1);
+      for (const attempt of [teacher, course]) {
+        assert.equal(attempt.result.status, 303);
+        assert.ok(attempt.result.location.includes(`result=${attempt.id}`));
+        const entry = await row(db, attempt.id);
+        assert.equal(entry.author_id, 1);
+        assert.equal(entry.reviewed_by, 1);
+        assert.equal(entry.status, "approved");
+        assert.equal(entry.reason, "管理员直接收录");
+        const resultPage = await load(event(db, 1, attempt.result.location));
+        assert.equal(resultPage.canPublishDirectly, true);
+        assert.equal(resultPage.resultSubmission.id, attempt.id);
+        assert.equal((await load(event(db, 2, attempt.result.location))).resultSubmission, null);
+      }
+      const entry = await row(db, course.id);
+      assert.equal(entry.published_lid, `community-${course.id}`);
+      const detail = event(db, null, "/courses/LOCAL-201");
+      detail.params.courseId = "LOCAL-201";
+      assert.equal((await courses.load(detail)).sections.length, 1);
+      assert.equal((await publicTeachers(event(db, null, "/teachers?q=管理员新老师"))).total, 1);
+      assert.deepEqual(await stats(db), { courses: 2, sections: 2, reviews: 0, teachers: 2 });
+      assert.equal((await loadLandingData(db, url)).newCourses[0].name, sample.name);
+      assert.ok((await loadCatalogPublicData(db, url)).options.colleges.includes(sample.college));
+      assert.equal((await queue(event(db, 1))).total, 0);
+      assert.equal((await queue(event(db, 1, "/admin/submissions?status=approved"))).total, 2);
+      const audits = (await db.prepare("SELECT actor_id,action,reason FROM catalog_submission_events").all()).results;
+      assert.deepEqual(
+        audits,
+        Array.from({ length: 2 }, () => ({ actor_id: 1, action: "approved", reason: "管理员直接收录" })),
+      );
+      assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+    } finally {
+      globalThis.caches = previous;
+    }
+  });
+});
+
+test("ordinary and expired administrators cannot forge or silently downgrade direct publication", async () => {
+  await fixture(async (db) => {
+    const direct = { ...sample, submissionMode: "direct" };
+    const forged = await submit(db, direct, 2);
+    assert.equal(forged.result.status, 403);
+    assert.equal(forged.result.data.renewAdmin, false);
+    await assert.rejects(submit(db, direct, null), (reason) => reason.status === 401);
+    assert.equal((await load(event(db, 2))).canPublishDirectly, false);
+    assert.equal((await load(event(db, null))).canPublishDirectly, false);
+    await db.prepare("UPDATE auth_users SET role_expires_at=0 WHERE id=1").run();
+    const expired = await submit(db, direct, 1);
+    assert.equal(expired.result.status, 403);
+    assert.equal(expired.result.data.renewAdmin, true);
+    assert.equal((await load(event(db, 1))).adminNeedsRenewal, true);
+    assert.equal((await submit(db, { ...sample, submissionMode: "pending" }, 1)).result.status, 403);
+    await db.prepare("UPDATE auth_users SET role_expires_at=unixepoch()+300 WHERE id=1").run();
+    const id = crypto.randomUUID();
+    const request = event(db, 1, "/submissions?/submit", { ...direct, submissionId: id });
+    request.fetch = async () => {
+      await db.prepare("UPDATE auth_users SET role_expires_at=0 WHERE id=1").run();
+      return Response.json({ success: true, hostname: request.url.hostname, action: "submit_catalog" });
+    };
+    const midRequest = await actions.submit(request);
+    assert.equal(midRequest.status, 403);
+    assert.equal(midRequest.data.renewAdmin, true);
+    assert.equal(await row(db, id), null);
+    assert.deepEqual(await stats(db), { courses: 1, sections: 1, reviews: 0, teachers: 1 });
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submission_events").first()).n, 0);
+    const ordinary = await submit(db, { ...sample, submissionMode: "pending" }, 2);
+    assert.equal((await row(db, ordinary.id)).status, "pending");
+  });
+});
+
+test("direct publication retries, UUID ownership and competing targets cannot create duplicate catalog or audit records", async () => {
+  await fixture(async (db) => {
+    const draft = { kind: "teacher", name: "唯一维护老师", submissionMode: "direct" };
+    const id = crypto.randomUUID();
+    const retries = await Promise.all([submit(db, draft, 1, id), submit(db, draft, 1, id)]);
+    assert.ok(retries.every(({ result }) => result.status === 303));
+    assert.equal((await submit(db, { ...draft, name: "重试不得覆盖" }, 1, id)).result.status, 303);
+    assert.equal((await row(db, id)).name, draft.name);
+    assert.equal((await submit(db, draft, 1)).result.status, 409);
+    const pending = await submit(db, { kind: "teacher", name: "仍待审老师" }, 2);
+    assert.equal((await submit(db, { kind: "teacher", name: "仍待审老师" }, 1)).result.status, 409);
+    assert.equal((await submit(db, draft, 1, pending.id)).result.status, 409);
+    assert.equal((await row(db, pending.id)).status, "pending");
+    const targets = await Promise.all([
+      submit(db, { kind: "teacher", name: "同一管理员目标" }, 1),
+      submit(db, { kind: "teacher", name: "同一管理员目标" }, 1),
+    ]);
+    assert.equal(targets.filter(({ result }) => result.status === 303).length, 1);
+    assert.equal(targets.filter(({ result }) => result.status === 409).length, 1);
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submission_events").first()).n, 2);
+    assert.deepEqual(await stats(db), { courses: 1, sections: 1, reviews: 0, teachers: 3 });
+  });
+});
+
+test("direct approval with a zero-row guard or failed write rolls back the new proposal, public entries and audit", async () => {
+  await fixture(async (db) => {
+    const collision = await submit(db, { ...sample, lid: "s1" }, 1);
+    assert.equal(collision.result.status, 409);
+    assert.equal(await row(db, collision.id), null);
+    await executeScript(
+      db,
+      `CREATE TRIGGER local_expire_direct AFTER INSERT ON catalog_submissions
+      WHEN NEW.author_id=1 BEGIN UPDATE auth_users SET role_expires_at=0 WHERE id=1; END;`,
+    );
+    const expiredInBatch = await submit(db, sample, 1);
+    assert.equal(expiredInBatch.result.status, 409);
+    assert.equal(await row(db, expiredInBatch.id), null);
+    assert.ok((await db.prepare("SELECT role_expires_at FROM auth_users WHERE id=1").first()).role_expires_at > 0);
+    await executeScript(db, "DROP TRIGGER local_expire_direct;");
+    await executeScript(
+      db,
+      "CREATE TRIGGER local_fail_direct BEFORE INSERT ON course_section BEGIN SELECT RAISE(ABORT,'direct rollback test'); END;",
+    );
+    const failedId = crypto.randomUUID();
+    await assert.rejects(submit(db, sample, 1, failedId), /direct rollback test/);
+    assert.equal(await row(db, failedId), null);
+    assert.deepEqual(await stats(db), { courses: 1, sections: 1, reviews: 0, teachers: 1 });
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submission_events").first()).n, 0);
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submissions").first()).n, 0);
+    assert.equal(
+      (await db.prepare("SELECT COUNT(*) AS n FROM category_options WHERE value=?").bind(sample.college).first()).n,
+      0,
+    );
+  });
+});
+
+test("administrator maintenance has an independent bounded quota and does not consume ordinary submission slots", async () => {
+  await fixture(async (db) => {
+    for (let n = 0; n < 60; n++) {
+      assert.equal((await submit(db, { kind: "teacher", name: `维护额度${n}` }, 1)).result.status, 303);
+    }
+    assert.equal((await submit(db, { kind: "teacher", name: "超过每小时维护额度" }, 1)).result.status, 429);
+    assert.equal(
+      (await db.prepare("SELECT COUNT(*) AS n FROM catalog_submissions WHERE author_id=1 AND status='pending'").first())
+        .n,
+      0,
+    );
+    await db.prepare("UPDATE auth_users SET role='user',role_expires_at=0 WHERE id=1").run();
+    for (let n = 0; n < 5; n++) {
+      assert.equal((await submit(db, { kind: "teacher", name: `普通额度${n}` }, 1)).result.status, 303);
+    }
+    assert.equal((await submit(db, { kind: "teacher", name: "超过普通额度" }, 1)).result.status, 429);
+    assert.equal(
+      (await db.prepare("SELECT COUNT(*) AS n FROM catalog_submissions WHERE author_id=1 AND status='pending'").first())
+        .n,
+      5,
+    );
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM catalog_submission_events").first()).n, 60);
+  });
+});

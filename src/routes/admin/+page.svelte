@@ -24,11 +24,16 @@ const time = (seconds: number) =>
 <main id="main-content" class="mx-auto max-w-6xl px-4 py-8 sm:px-6">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h1 class="text-2xl font-semibold">点评管理</h1>
-    <a href="/admin/submissions" class="text-sm text-primary">目录补充审核 →</a>
   </div>
   <p class="mt-3 text-sm leading-7 text-muted-foreground">
     按内容、课程、老师或作者查找点评，每次操作需填写理由。删除可恢复；本站封禁会立即撤销 LXK 会话，现有点评保留。
   </p>
+  <nav class="mt-5 flex flex-wrap gap-3 text-sm" aria-label="管理员工作入口">
+    <a href="/admin/submissions?kind=teacher" class="rounded-md border border-border px-4 py-2">老师审核</a>
+    <a href="/admin/submissions?kind=course" class="rounded-md border border-border px-4 py-2">课程审核</a>
+    <a href="/submissions?kind=teacher" class="rounded-md bg-primary px-4 py-2 text-primary-foreground">直接添加老师</a>
+    <a href="/submissions?kind=course" class="rounded-md bg-primary px-4 py-2 text-primary-foreground">直接添加课程</a>
+  </nav>
   <p class="mt-2 text-xs text-muted-foreground">
     管理权限每次验证最多有效一小时。权限到期后，可通过顶部“验证管理权限”重新登录。
   </p>

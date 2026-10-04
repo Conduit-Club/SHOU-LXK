@@ -1,6 +1,7 @@
 <script lang="ts">
 import "../app.css";
-import { BookOpen, GraduationCap, MessageSquareText, Search, House, Users, LogOut } from "@lucide/svelte";
+import { BookOpen, GraduationCap, MessageSquareText, Search, House, Users, LogOut, ChevronDown } from "@lucide/svelte";
+import { afterNavigate } from "$app/navigation";
 import { page } from "$app/state";
 import type { Snippet } from "svelte";
 import type { LayoutData } from "./$types";
@@ -9,7 +10,20 @@ import ReviewAuthor from "#lib/components/review-author.svelte";
 let { children, data }: { children: Snippet; data: LayoutData } = $props();
 const returnTo = $derived(`${page.url.pathname}${page.url.search}`);
 const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSearchParams({ returnTo })}`;
+let accountMenu = $state<HTMLDetailsElement>();
+function closeAccountMenu(event?: MouseEvent) {
+  if (accountMenu && (!event || !accountMenu.contains(event.target as Node))) accountMenu.open = false;
+}
+function accountKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && accountMenu?.open) {
+    accountMenu.open = false;
+    accountMenu.querySelector("summary")?.focus();
+  }
+}
+afterNavigate(() => closeAccountMenu());
 </script>
+
+<svelte:window onclick={closeAccountMenu} onkeydown={accountKeydown} />
 
 <a
   href="#main-content"
@@ -29,9 +43,81 @@ const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSea
           ></span
         >
       </a>
-      <ThemeToggle />
     </div>
 
+    <div class="site-account text-sm">
+      <ThemeToggle />
+      {#if data.auth}
+        {#if data.auth.isAdmin}
+          <a href="/admin/submissions" class="header-control desktop-management-toggle">目录审核</a>
+          <form method="POST" action="/admin/mode" class="desktop-management-toggle">
+            <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />
+            <input type="hidden" name="returnTo" value={returnTo} />
+            <input type="hidden" name="enabled" value={data.managementMode ? "0" : "1"} />
+            <button type="submit" aria-pressed={data.managementMode} class="header-control">
+              管理模式{data.managementMode ? "：开" : "：关"}
+            </button>
+          </form>
+        {/if}
+        <details class="account-menu" bind:this={accountMenu}>
+          <summary aria-label="打开账号菜单" class="account-menu-trigger">
+            <span class="account-identity"
+              ><ReviewAuthor identity={{ display_name: data.auth.name, avatar_url: data.auth.avatarUrl }} /></span
+            >
+            <ChevronDown class="size-3.5 shrink-0" aria-hidden="true" />
+          </summary>
+          <div class="account-menu-panel">
+            <div class="account-menu-heading">
+              <strong>{data.auth.name}</strong><span
+                >{data.auth.isAdmin ? "管理员" : data.auth.canRenewAdmin ? "管理权限待验证" : "已登录"}</span
+              >
+            </div>
+            {#if data.auth.isAdmin}
+              <a href="/admin">点评管理</a>
+              <a href="/admin/submissions">老师 / 课程审核</a>
+              <a href="/submissions">直接添加老师 / 课程</a>
+              <form method="POST" action="/admin/mode">
+                <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />
+                <input type="hidden" name="returnTo" value={returnTo} />
+                <input type="hidden" name="enabled" value={data.managementMode ? "0" : "1"} />
+                <button type="submit" aria-pressed={data.managementMode}
+                  >{data.managementMode ? "关闭管理模式" : "开启管理模式"}<small>在列表和详情中处理点评</small></button
+                >
+              </form>
+            {:else if data.auth.canRenewAdmin}
+              <a href={authLink("login")} data-sveltekit-reload
+                >重新验证管理权限<small>验证后恢复审核与直接发布</small></a
+              >
+            {/if}
+            <a href="/submissions">我的目录补充</a>
+            <a href="https://auth.shoumc.com/account" data-sveltekit-reload
+              >头像与账号设置<small>前往统一账号中心</small></a
+            >
+            <form method="POST" action="/auth/logout" class="account-menu-logout">
+              <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />
+              <input type="hidden" name="returnTo" value={returnTo} />
+              <button type="submit"
+                ><span class="flex items-center gap-2"><LogOut class="size-4" aria-hidden="true" />退出本站登录</span
+                ></button
+              >
+            </form>
+          </div>
+        </details>
+      {:else if data.authEnabled}
+        <a
+          href={authLink("login")}
+          data-sveltekit-reload
+          class="inline-flex min-h-9 items-center font-medium text-primary">登录</a
+        >
+        <a
+          href={authLink("register")}
+          data-sveltekit-reload
+          class="inline-flex min-h-9 items-center text-muted-foreground hover:text-primary">注册</a
+        >
+      {:else}
+        <span class="text-xs text-muted-foreground">登录暂不可用</span>
+      {/if}
+    </div>
     <div class="site-navigation">
       <div class="site-links">
         {#each [{ href: "/", label: "首页", icon: House }, { href: "/reviews", label: "点评", icon: MessageSquareText }, { href: "/courses", label: "课程", icon: BookOpen }, { href: "/teachers", label: "老师", icon: Users }] as item}
@@ -67,61 +153,6 @@ const authLink = (intent: "login" | "register") => `/auth/${intent}?${new URLSea
           aria-label="搜索"><Search class="size-4" aria-hidden="true" /></button
         >
       </form>
-    </div>
-    <div class="site-account text-sm">
-      {#if data.auth}
-        {#if data.auth.isAdmin}
-          <a href="/admin" class="inline-flex min-h-9 items-center whitespace-nowrap font-medium text-primary">管理</a>
-          <form method="POST" action="/admin/mode">
-            <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />
-            <input type="hidden" name="returnTo" value={returnTo} />
-            <input type="hidden" name="enabled" value={data.managementMode ? "0" : "1"} />
-            <button
-              type="submit"
-              aria-pressed={data.managementMode}
-              class="min-h-9 whitespace-nowrap rounded-md border border-border px-2 py-1.5 text-xs text-primary"
-            >
-              管理模式{data.managementMode ? "：开" : "：关"}
-            </button>
-          </form>
-        {:else if data.auth.canRenewAdmin}
-          <a
-            href={authLink("login")}
-            data-sveltekit-reload
-            class="inline-flex min-h-9 items-center whitespace-nowrap text-xs text-primary">验证管理权限</a
-          >
-        {/if}
-        <a
-          href="https://auth.shoumc.com/account"
-          class="flex min-h-9 min-w-0 max-w-36 items-center gap-1.5 text-muted-foreground hover:text-primary"
-          aria-label="打开统一账号中心"
-        >
-          <ReviewAuthor identity={{ display_name: data.auth.name, avatar_url: data.auth.avatarUrl }} />
-        </a>
-        <form method="POST" action="/auth/logout">
-          <input type="hidden" name="csrfToken" value={data.auth.csrfToken} />
-          <input type="hidden" name="returnTo" value={returnTo} />
-          <button
-            type="submit"
-            class="flex min-h-9 items-center gap-1.5 whitespace-nowrap text-muted-foreground hover:text-primary"
-            aria-label="退出本站登录"
-            ><LogOut class="size-4" aria-hidden="true" /><span class="hidden sm:inline">退出</span></button
-          >
-        </form>
-      {:else if data.authEnabled}
-        <a
-          href={authLink("login")}
-          data-sveltekit-reload
-          class="inline-flex min-h-9 items-center font-medium text-primary">登录</a
-        >
-        <a
-          href={authLink("register")}
-          data-sveltekit-reload
-          class="inline-flex min-h-9 items-center text-muted-foreground hover:text-primary">注册</a
-        >
-      {:else}
-        <span class="text-xs text-muted-foreground">登录暂不可用</span>
-      {/if}
     </div>
   </nav>
 </header>
