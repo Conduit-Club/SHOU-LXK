@@ -4,8 +4,8 @@ import type { FilterOptions, LatestReview, NewCourse, NewTeacher, SiteStats } fr
 // Only public, query-independent data: never HTML, filter results, cookies,
 // Turnstile tokens, form values or action responses.
 const CACHE_NAME = "shou-lxk-home-v2";
-export const HOME_TTL = { options: 6 * 60 * 60, latest: 60, stats: 60, additions: 60 } as const;
-type HomeKey = keyof typeof HOME_TTL;
+export const HOME_TTL = { options: 6 * 60 * 60, latest: 60, stats: 60, additions: 60, similar: 300 } as const;
+type HomeKey = keyof typeof HOME_TTL | `similar/${string}`;
 type PublicCache = Pick<Cache, "match" | "put" | "delete">;
 
 async function openCache(): Promise<PublicCache | undefined> {
@@ -44,7 +44,8 @@ export async function readHomeCache<T>(
   }
   // Start the lifetime before querying: a slow in-flight read cannot extend
   // stale data past its TTL after a concurrent mutation/invalidation.
-  const expiresAt = now() + HOME_TTL[key] * 1000;
+  const ttlKey = key.startsWith("similar/") ? "similar" : (key as keyof typeof HOME_TTL);
+  const expiresAt = now() + HOME_TTL[ttlKey] * 1000;
   const value = await load(); // Errors are deliberately not cached.
   const remaining = Math.floor((expiresAt - now()) / 1000);
   if (cache && remaining > 0) {
@@ -141,5 +142,38 @@ export async function invalidateCatalog(url: URL, cache = openCache()) {
   if (!store) return;
   await Promise.allSettled(
     ["stats", "additions", "options"].map((key) => store.delete(cacheRequest(url, key as HomeKey))),
+  );
+}
+
+// Public bounded candidates only. Caller-specific course exclusions and ranking
+// happen after reading; no account, permission, review author or CSRF is cached.
+export async function loadSimilarCandidates<T>(
+  db: D1Database,
+  url: URL,
+  college: string,
+  credits: number,
+  cache = openCache(),
+  now = Date.now,
+): Promise<T[]> {
+  const key: HomeKey = `similar/${encodeURIComponent(college)}/${credits}`;
+  return readHomeCache<T[]>(
+    await cache,
+    url,
+    key,
+    async () =>
+      (
+        await db
+          .prepare(`
+    WITH candidates AS MATERIALIZED (
+      SELECT lid, course_id, college, elective_type, credits, attribute, review_count
+      FROM course_section INDEXED BY course_section_college_credits_idx
+      WHERE college = ? AND credits = ? LIMIT 48
+    )
+    SELECT candidates.*, c.name FROM candidates JOIN courses AS c ON c.course_id = candidates.course_id
+  `)
+          .bind(college, credits)
+          .all<T>()
+      ).results,
+    now,
   );
 }

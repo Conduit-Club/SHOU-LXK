@@ -2,7 +2,7 @@ import { getBindings } from "#lib/server/platform.js";
 import { withTeachers } from "#lib/server/teachers.js";
 import { error, fail, redirect } from "@sveltejs/kit";
 import { verifyTurnstile } from "#lib/server/turnstile.js";
-import { invalidateHomeReviews } from "#lib/server/home-cache.js";
+import { invalidateHomeReviews, loadSimilarCandidates } from "#lib/server/home-cache.js";
 import { reviewSession, reviewWriteGuard, writeReview } from "#lib/server/auth.js";
 import { publicReviewProjection, reviewIdentity } from "#lib/server/review-identity.js";
 import type { PublicReviewIdentity } from "#lib/server/review-identity.js";
@@ -69,18 +69,12 @@ export const load: PageServerLoad = async (event) => {
   if (recommendationBasis?.college) {
     // Bound the indexed candidate pool BEFORE joining/ranking. This is a small
     // selection of related courses, not a full-catalog popularity ranking.
-    const { results } = await db
-      .prepare(`
-      WITH candidates AS MATERIALIZED (
-        SELECT lid, course_id, college, elective_type, credits, attribute, review_count
-        FROM course_section INDEXED BY course_section_college_credits_idx
-        WHERE college = ? AND credits = ? LIMIT 48
-      )
-      SELECT candidates.*, c.name FROM candidates
-      JOIN courses AS c ON c.course_id = candidates.course_id
-    `)
-      .bind(recommendationBasis.college, recommendationBasis.credits)
-      .all<SimilarCourse>();
+    const results = await loadSimilarCandidates<SimilarCourse>(
+      db,
+      url,
+      recommendationBasis.college,
+      recommendationBasis.credits,
+    );
     const seen = new Set([course.course_id]);
     similarCourses = results
       .sort((a, b) => b.review_count - a.review_count || a.lid.localeCompare(b.lid))
