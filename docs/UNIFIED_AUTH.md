@@ -26,7 +26,7 @@ scope 固定为 `openid profile email`，不申请 `offline_access`。回调必�
 
 会话为 **8 小时绝对期限**，普通浏览不延长期限，也不每次访问账号中心。没有会话 Cookie（或格式不合法）的浏览请求不执行认证 SQL；有效 Cookie 通过主键和用户索引查询本站会话，同一请求只查询一次。页面与 SvelteKit 数据响应使用 `Cache-Control: private, no-store` 和 `Vary: Cookie`；首页 Cache API 继续只缓存公共 JSON，绝不放账号、CSRF、作者关联或 Cookie。
 
-登录事务在 D1 保存 10 分钟，state 与独立 `__Host-lxk-login` 浏览器 Cookie 的 hash 绑定。回调用原子 `DELETE ... RETURNING` 消费事务，成功、provider 拒绝或令牌校验失败都不能重试该事务；另一浏览器无法消费。开始新的登录会替换当前登录 Cookie，因此同一浏览器应顺序完成授权。每次开始登录最多清理 50 条过期事务和 50 条过期会话；过期检查不依赖清理是否及时。
+登录事务在 D1 保存 10 分钟，state 与独立 `__Host-lxk-login` 浏览器 Cookie 的 hash 绑定。回调用原子 `DELETE ... RETURNING` 消费事务，成功、provider 拒绝或令牌校验失败都不能重试该事务；另一浏览器无法消费。开始新的登录会替换当前登录 Cookie，因此同一浏览器应顺序完成授权。登录入口不再执行过期清理，仅在人机验证与限流通过后写入一条事务。清理改在完整登录成功、会话提交后执行：每个 Worker isolate 最多每 5 分钟尝试一次，每次最多删除 50 条过期事务和 50 条过期会话；并发登录合并清理，清理失败不会使已提交的登录失败。此频率不是全球定时任务；没有成功登录时旧行可能暂留，过期检查与回调单次消费不依赖清理是否及时。删除行仍产生写入计费，本改动减少触发频率与未完成登录引起的删除，不能追回历史计费。
 
 新课程/教师点评将 `author_id` 写为服务端会话用户 ID，不能由表单指定作者。写请求要求同源 Origin、本站 CSRF token、已完成用户名资料的有效会话以及原有 Turnstile 的 hostname/action 校验。默认 `visibility=anonymous`：公开查询固定投影“匿名用户”和 NULL 头像。选择 `visibility=username` 时，用户名与头像快照只来自服务端可信会话，表单提交的姓名、头像和账号 ID 都不会被采用。快照随删除/恢复完整保留；作者替换或移除头像后旧图片可能失效，界面回退字符图标。
 
@@ -75,3 +75,5 @@ pixi run pnpm exec wrangler deploy --config wrangler.jsonc --keep-vars --strict 
 迁移与之前公开应用兼容，可回退应用而保留新增表/列。回退旧应用会恢复旧版本的匿名写入行为，应由维护者明确选择；不要为回退删除认证数据或重放结构迁移。数据库故障或配额耗尽时沿用维护开关，数据库未准备好之前不恢复访问。
 
 自动测试覆盖浏览器绑定、PKCE、回调重放、签名/issuer/audience/nonce/expiry 拒绝、未验证邮箱、UserInfo subject、会话旋转/过期/退出、CSRF、匿名零认证查询、响应缓存隔离、作者写入与旧数据迁移兼容。
+
+登录/注册确认页使用 Referrer-Policy: same-origin，让原生同源 POST 带上有效 Origin；跨站跳转仍不发送 Referer，授权跳转和回调响应保留 no-referrer。SvelteKit 与入口的 Origin 校验保持启用。

@@ -259,10 +259,23 @@ export const EXPIRED_LOGIN_SQL = `DELETE FROM auth_login_transactions INDEXED BY
 export const EXPIRED_SESSION_SQL = `DELETE FROM auth_sessions INDEXED BY sqlite_autoindex_auth_sessions_1
   WHERE token_hash IN (SELECT token_hash FROM auth_sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 50)`;
 
-async function pruneExpired(db: D1Database) {
-  // Bound cleanup work; expiry is enforced on every read even before removal.
-  await db.batch([db.prepare(EXPIRED_LOGIN_SQL).bind(seconds()), db.prepare(EXPIRED_SESSION_SQL).bind(seconds())]);
+export function createExpiredAuthCleanup() {
+  let nextAttemptAt = 0;
+  return async (db: D1Database, now = seconds()) => {
+    if (now < nextAttemptAt) return;
+    // Reserve before awaiting to coalesce concurrent successful logins. This
+    // is an isolate-local throttle, not a global schedule or security boundary.
+    nextAttemptAt = now + 300;
+    try {
+      await db.batch([db.prepare(EXPIRED_LOGIN_SQL).bind(now), db.prepare(EXPIRED_SESSION_SQL).bind(now)]);
+    } catch {
+      // Housekeeping must not invalidate a session we have already committed.
+      // Expired rows are rejected on reads even when cleanup is unavailable.
+      console.error(JSON.stringify({ event: "auth_cleanup_failed" }));
+    }
+  };
 }
+const pruneExpired = createExpiredAuthCleanup();
 
 export async function beginLogin(event: AuthEvent, register = false, fetcher?: oidc.CustomFetch): Promise<string> {
   const { env, config, db } = requestSettings(event);
@@ -282,7 +295,6 @@ export async function beginLogin(event: AuthEvent, register = false, fetcher?: o
     nonce,
     ...(register ? { prompt: "create" } : {}),
   });
-  await pruneExpired(db);
   await db
     .prepare(`INSERT INTO auth_login_transactions
       (state_hash, browser_hash, verifier, nonce, return_to, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -393,6 +405,7 @@ export async function completeLogin(event: AuthEvent, fetcher?: oidc.CustomFetch
     throw reason;
   }
   setCookie(event.cookies, event.url, "session", token, SESSION_TTL);
+  await pruneExpired(db);
   return safeReturnTo(transaction.return_to);
 }
 

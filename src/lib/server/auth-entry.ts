@@ -20,7 +20,9 @@ function entryPage(url: URL, options: EntryOptions, status = 200, message = "请
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "private, no-store",
     "X-Robots-Tag": "noindex, nofollow",
-    "Referrer-Policy": "no-referrer",
+    // Native same-origin form POSTs need their real Origin for CSRF checks.
+    // Cross-origin navigation still sends no Referer with this policy.
+    "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
   });
   if (status === 503)

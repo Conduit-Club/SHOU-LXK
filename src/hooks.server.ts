@@ -20,7 +20,8 @@ function secureResponse(response: Response, url: URL) {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set(
     "Referrer-Policy",
-    url.pathname.startsWith("/auth/") ? "no-referrer" : "strict-origin-when-cross-origin",
+    response.headers.get("Referrer-Policy") ??
+      (url.pathname.startsWith("/auth/") ? "no-referrer" : "strict-origin-when-cross-origin"),
   );
   return response;
 }

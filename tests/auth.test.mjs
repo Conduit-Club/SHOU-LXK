@@ -9,6 +9,28 @@ const { load: layout } = await import("../src/routes/+layout.server.ts");
 const courses = await import("../src/routes/courses/[courseId]/+page.server.ts");
 const teachers = await import("../src/routes/teachers/[teacherId]/+page.server.ts");
 
+test("cleanup coalesces concurrent logins and backs off after database failure", async () => {
+  const cleanup = auth.createExpiredAuthCleanup();
+  let calls = 0;
+  let fail = false;
+  const db = {
+    prepare: () => ({ bind: () => ({}) }),
+    batch: async () => {
+      calls++;
+      if (fail) throw new Error("unavailable");
+    },
+  };
+  await Promise.all([cleanup(db, 1000), cleanup(db, 1000), cleanup(db, 1299)]);
+  assert.equal(calls, 1);
+  fail = true;
+  await cleanup(db, 1300);
+  await cleanup(db, 1301);
+  assert.equal(calls, 2);
+  fail = false;
+  await cleanup(db, 1600);
+  assert.equal(calls, 3);
+});
+
 const issuer = "https://auth.shoumc.com/api/auth";
 const config = {
   OIDC_ISSUER: issuer,
@@ -193,7 +215,15 @@ test("OIDC transaction binds browser, PKCE, state and nonce; sessions persist as
     const mock = provider();
     const target = "/courses/001?lid=1&write=1";
     const start = event(db, jar, `/auth/register?${new URLSearchParams({ returnTo: target })}`);
-    const authorization = await auth.beginLogin(start, true, mock.fetch);
+    const measured = measureDatabase(db);
+    const authorization = await auth.beginLogin(
+      { ...start, platform: { env: { ...config, DB: measured.db } } },
+      true,
+      mock.fetch,
+    );
+    assert.equal(measured.metrics.queries, 1);
+    assert.match(measured.statements[0].sql, /INSERT INTO auth_login_transactions/);
+    assert.doesNotMatch(measured.statements[0].sql, /DELETE/);
     const authorize = new URL(authorization);
     assert.equal(authorize.searchParams.get("prompt"), "create");
     assert.equal(authorize.searchParams.get("scope"), "openid profile email");

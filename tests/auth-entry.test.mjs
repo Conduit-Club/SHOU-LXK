@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import "./helpers/server-imports.mjs";
 const { handleAuthEntry } = await import("../src/lib/server/auth-entry.ts");
+const { handle } = await import("../src/hooks.server.ts");
 const origin = "https://site.invalid";
 const options = () => ({
   siteKey: "0xtest",
@@ -27,6 +28,25 @@ const forbiddenBegin = async () => {
   throw new Error("Gate rejection must not reach provider or D1");
 };
 
+test("security middleware preserves the form policy and keeps callback redirects private", async () => {
+  for (const [path, policy] of [
+    ["/auth/login", "same-origin"],
+    ["/auth/register", "same-origin"],
+    ["/auth/callback", "no-referrer"],
+  ]) {
+    const url = new URL(origin + path);
+    const response = await handle({
+      event: { url, request: new Request(url), platform: { env: {} }, locals: {} },
+      resolve: async () =>
+        path === "/auth/callback"
+          ? new Response(null, { status: 303, headers: { Location: "/", "Referrer-Policy": "no-referrer" } })
+          : handleAuthEntry(new Request(url), options(), forbiddenBegin),
+    });
+    assert.equal(response.headers.get("Referrer-Policy"), policy);
+    assert.match(response.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/);
+  }
+});
+
 test("GET, HEAD and prefetch never call provider, rate limit, or database; query secrets are not reflected", async () => {
   for (const method of ["GET", "HEAD"]) {
     const config = options();
@@ -39,6 +59,7 @@ test("GET, HEAD and prefetch never call provider, rate limit, or database; query
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+    assert.equal(response.headers.get("Referrer-Policy"), "same-origin");
     assert.match(response.headers.get("X-Robots-Tag"), /noindex/);
     const html = await response.text();
     assert.match(html, /method="POST"/);
