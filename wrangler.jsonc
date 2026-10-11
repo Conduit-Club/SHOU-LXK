@@ -13,6 +13,10 @@
       "database_id": "9e6f10ee-4e0b-4b8c-8662-b598ba79f3ba",
     },
   ],
+  "ratelimits": [
+    { "name": "AUTH_IP_LIMITER", "namespace_id": "6601", "simple": { "limit": 6, "period": 60 } },
+    { "name": "AUTH_SITE_LIMITER", "namespace_id": "6602", "simple": { "limit": 12, "period": 60 } },
+  ],
   "workers_dev": false,
   "vars": {
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFMgPNoCPDd8BWht",

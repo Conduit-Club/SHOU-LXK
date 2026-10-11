@@ -453,31 +453,50 @@ test("missing secrets and insecure production configuration cannot create authen
   assert.equal(mock.calls, 0);
 });
 
-test("login and register route handlers permit the validated provider redirect and hide configuration failures", async () => {
-  const { GET: login } = await import("../src/routes/auth/login/+server.ts");
-  const { GET: register } = await import("../src/routes/auth/register/+server.ts");
+test("login and register only redirect verified POSTs and hide configuration failures", async () => {
+  const { GET: loginPage, POST: login } = await import("../src/routes/auth/login/+server.ts");
+  const { GET: registerPage, POST: register } = await import("../src/routes/auth/register/+server.ts");
   const originalFetch = globalThis.fetch;
   const mock = provider();
-  globalThis.fetch = mock.fetch;
+  globalThis.fetch = async (address, init) =>
+    new URL(address).hostname === "challenges.cloudflare.com"
+      ? Response.json({ success: true, hostname: "lxk.shoumc.com", action: "auth-start" })
+      : mock.fetch(address, init);
+  const guard = {
+    TURNSTILE_SITE_KEY: "0xtest",
+    TURNSTILE_SECRET_KEY: "test-only-secret",
+    AUTH_IP_LIMITER: { limit: async () => ({ success: true }) },
+    AUTH_SITE_LIMITER: { limit: async () => ({ success: true }) },
+  };
+  const post = {
+    method: "POST",
+    body: "cf-turnstile-response=verified",
+    headers: {
+      Origin: "https://lxk.shoumc.com",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "CF-Connecting-IP": "192.0.2.1",
+    },
+  };
   try {
     await fixture(async (db) => {
-      for (const [route, path, intent] of [
-        [login, "/auth/login?returnTo=%2Fcourses%2F001", null],
-        [register, "/auth/register?returnTo=%2Fteachers%2F1", "create"],
+      for (const [page, route, path, intent] of [
+        [loginPage, login, "/auth/login?returnTo=%2Fcourses%2F001", null],
+        [registerPage, register, "/auth/register?returnTo=%2Fteachers%2F1", "create"],
       ]) {
-        await assert.rejects(route(event(db, cookieJar(), path)), (redirect) => {
-          assert.equal(redirect.status, 303);
-          const destination = new URL(redirect.location);
-          assert.equal(destination.origin, "https://auth.shoumc.com");
-          assert.equal(destination.pathname, "/api/auth/oauth2/authorize");
-          assert.equal(destination.searchParams.get("prompt"), intent);
-          assert.equal(destination.searchParams.get("code_challenge_method"), "S256");
-          assert.equal(destination.searchParams.has("client_secret"), false);
-          return true;
-        });
+        const measured = measureDatabase(db);
+        assert.equal((await page(event(measured.db, cookieJar(), path, undefined, guard))).status, 200);
+        assert.equal(measured.metrics.queries, 0);
+        const response = await route(event(db, cookieJar(), path, post, guard));
+        assert.equal(response.status, 303);
+        const destination = new URL(response.headers.get("Location"));
+        assert.equal(destination.origin, "https://auth.shoumc.com");
+        assert.equal(destination.pathname, "/api/auth/oauth2/authorize");
+        assert.equal(destination.searchParams.get("prompt"), intent);
+        assert.equal(destination.searchParams.get("code_challenge_method"), "S256");
+        assert.equal(destination.searchParams.has("client_secret"), false);
       }
       await assert.rejects(
-        login(event(db, cookieJar(), "/auth/login", undefined, { OIDC_CLIENT_SECRET: undefined })),
+        login(event(db, cookieJar(), "/auth/login", post, { ...guard, OIDC_CLIENT_SECRET: undefined })),
         (failure) => {
           assert.equal(failure.status, 503);
           assert.equal(failure.body.message, "账号服务暂时不可用，请稍后重试。");

@@ -1,13 +1,26 @@
-import { redirect } from "@sveltejs/kit";
-import { authError, beginLogin } from "#lib/server/auth.js";
+import { authError, beginLogin, safeReturnTo } from "#lib/server/auth.js";
+import { handleAuthEntry } from "#lib/server/auth-entry.js";
+import { getBindings } from "#lib/server/platform.js";
 import type { RequestHandler } from "./$types";
 
-export const GET: RequestHandler = async (event) => {
-  let destination: string;
+const entry: RequestHandler = async (event) => {
+  const env = getBindings(event.platform);
   try {
-    destination = await beginLogin(event);
+    return await handleAuthEntry(
+      event.request,
+      {
+        siteKey: env.TURNSTILE_SITE_KEY,
+        secret: env.TURNSTILE_SECRET_KEY,
+        ipLimiter: env.AUTH_IP_LIMITER,
+        siteLimiter: env.AUTH_SITE_LIMITER,
+        returnTo: safeReturnTo(event.url.searchParams.get("returnTo")),
+        brand: "SHOU LXK · 上海海洋大学课程评价",
+      },
+      () => beginLogin(event, false),
+    );
   } catch (reason) {
     authError(reason);
   }
-  redirect(303, destination, { external: [new URL(destination).origin] });
 };
+export const GET = entry;
+export const POST = entry;
